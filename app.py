@@ -1,7 +1,8 @@
 """
 NRC PAINEL GERENCIAL
 Painel gerencial das Unidades Interligadas - NRC/COGEX/TJMA
-Dados carregados automaticamente a partir de planilha Google Sheets publicada em CSV.
+Dados carregados automaticamente da planilha Google Sheets publicada em CSV
+(ou, opcionalmente, de um arquivo CSV/XLSX enviado manualmente).
 
 Como rodar localmente:
     streamlit run app.py
@@ -26,12 +27,18 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# URL da planilha Google Sheets publicada em formato CSV.
-# Para trocar a fonte de dados, publique a planilha em
+# URL da planilha Google Sheets publicada em formato CSV (fonte padrão).
+# Para trocar a fonte de dados padrão, publique a planilha em
 # Arquivo > Compartilhar > Publicar na Web > CSV, e cole o link abaixo.
-DATA_URL = (
+DATA_URL_PADRAO = (
     "https://docs.google.com/spreadsheets/d/e/2PACX-1vT73jQ3Ae7I0gSx-UqOvA3C_JznfDQYrb23nLx4jpQXH03i1-ocEzHxnRNZnYTTHQ/pub?output=csv"
 )
+
+COLUNAS_ESPERADAS = [
+    "MUNICÍPIOS", "HOSPITAL", "DATA DA INSTALAÇÃO", "ESFERA", "SERVENTIA",
+    "JUSTIÇA ABERTA", "HABILITAÇÃO CRC", "SITUAÇÃO ATUAL", "SITUAÇÃO GERAL",
+    "ÍNDICES IBGE", "OBSERVAÇÕES",
+]
 
 # ----------------------------------------------------------------------------
 # AUTENTICAÇÃO
@@ -86,12 +93,31 @@ def logout_button():
 
 
 # ----------------------------------------------------------------------------
+# CLASSIFICAÇÃO DE STATUS (robusta contra valores vazios/NaN/não-string)
+# ----------------------------------------------------------------------------
+def classificar_status(valor) -> str:
+    if valor is None:
+        return "Sem informação"
+    v = str(valor).strip().upper()
+    if v == "" or v == "NAN":
+        return "Sem informação"
+    if "IMPLANTA" in v or "PREVIS" in v or "EM PROCESSO" in v or "PROCESSO CNJ" in v:
+        return "Em fase de implantação"
+    if "REATIVA" in v:
+        return "Em fase de reativação"
+    if "NÃO" in v and "FUNCION" in v:
+        return "Inativa"
+    if "PAROU" in v or "PARALISAD" in v or "DESATIVAD" in v:
+        return "Inativa"
+    if "FUNCIONANDO" in v or v == "OK":
+        return "Ativa"
+    return "Outra situação"
+
+
+# ----------------------------------------------------------------------------
 # CARGA E TRATAMENTO DOS DADOS
 # ----------------------------------------------------------------------------
-@st.cache_data(ttl=600, show_spinner="Carregando dados da planilha...")
-def load_data(url: str) -> pd.DataFrame:
-    df = pd.read_csv(url)
-
+def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     # remove eventual coluna de índice sem nome, vinda da planilha
     unnamed = [c for c in df.columns if str(c).startswith("Unnamed")]
     df = df.drop(columns=unnamed, errors="ignore")
@@ -99,25 +125,12 @@ def load_data(url: str) -> pd.DataFrame:
     # limpa espaços dos nomes de coluna
     df.columns = [str(c).strip() for c in df.columns]
 
-    # limpa espaços em branco dos valores texto
+    # limpa espaços em branco de TODAS as colunas de texto, tratando NaN
+    # de forma segura (independe do dtype interno usado pelo pandas)
     for c in df.columns:
-        if df[c].dtype == object:
-            df[c] = df[c].astype(str).str.strip()
-            df[c] = df[c].replace({"nan": "", "None": ""})
+        df[c] = df[c].apply(lambda x: "" if pd.isna(x) else str(x).strip())
 
-    # coluna normalizada de status de funcionamento, para facilitar filtro
-    def classificar_status(valor: str) -> str:
-        v = valor.upper()
-        if not v:
-            return "Sem informação"
-        if "NÃO" in v and "FUNCION" in v:
-            return "Não funcionando"
-        if "PAROU" in v or "PARALISAD" in v:
-            return "Paralisada"
-        if "FUNCIONANDO" in v or v == "OK" or "REATIVADA" in v:
-            return "Funcionando"
-        return "Outra situação"
-
+    # coluna normalizada de status, usada nos filtros e KPIs
     if "SITUAÇÃO ATUAL" in df.columns:
         df["STATUS_FUNCIONAMENTO"] = df["SITUAÇÃO ATUAL"].apply(classificar_status)
     else:
@@ -126,15 +139,61 @@ def load_data(url: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=600, show_spinner="Carregando dados da planilha...")
+def load_data_url(url: str) -> pd.DataFrame:
+    df = pd.read_csv(url)
+    return tratar_dataframe(df)
+
+
+def load_data_upload(arquivo) -> pd.DataFrame:
+    nome = arquivo.name.lower()
+    if nome.endswith(".csv"):
+        df = pd.read_csv(arquivo)
+        return tratar_dataframe(df)
+    else:
+        # arquivo Excel: se tiver mais de uma aba, deixa o usuário escolher
+        planilhas = pd.read_excel(arquivo, sheet_name=None)
+        if len(planilhas) == 1:
+            df = list(planilhas.values())[0]
+        else:
+            aba = st.selectbox("Escolha a aba da planilha", list(planilhas.keys()))
+            df = planilhas[aba]
+        return tratar_dataframe(df)
+
+
 # ----------------------------------------------------------------------------
 # PAINEL PRINCIPAL
 # ----------------------------------------------------------------------------
 def painel():
-    df = load_data(DATA_URL)
-
     with st.sidebar:
         st.markdown("## 🏛️ NRC PAINEL GERENCIAL")
         st.caption("COGEX / TJMA")
+        st.markdown("### Fonte de dados")
+
+        fonte = st.radio(
+            "Selecione a origem dos dados",
+            ["Planilha publicada (padrão)", "Enviar arquivo (CSV/XLSX)"],
+            index=0,
+        )
+
+        df = None
+        if fonte == "Planilha publicada (padrão)":
+            try:
+                df = load_data_url(DATA_URL_PADRAO)
+            except Exception as e:
+                st.error(f"Não foi possível carregar a planilha publicada: {e}")
+        else:
+            arquivo = st.file_uploader("Envie o arquivo CSV ou XLSX", type=["csv", "xlsx", "xls"])
+            if arquivo is not None:
+                try:
+                    df = load_data_upload(arquivo)
+                except Exception as e:
+                    st.error(f"Não foi possível ler o arquivo: {e}")
+
+        if df is None:
+            st.info("Aguardando dados...")
+            st.stop()
+
         st.markdown("### Filtros")
 
         def multiselect_filtro(label, coluna):
@@ -145,15 +204,15 @@ def painel():
 
         f_municipio = multiselect_filtro("Município", "MUNICÍPIOS")
         f_esfera = multiselect_filtro("Esfera", "ESFERA")
-        f_status = multiselect_filtro("Status de funcionamento", "STATUS_FUNCIONAMENTO")
+        f_status = multiselect_filtro("Status (Ativa/Inativa/...)", "STATUS_FUNCIONAMENTO")
         f_situacao_geral = multiselect_filtro("Situação geral", "SITUAÇÃO GERAL")
         f_justica_aberta = multiselect_filtro("Justiça Aberta", "JUSTIÇA ABERTA")
         f_crc = multiselect_filtro("Habilitação CRC", "HABILITAÇÃO CRC")
         f_serventia = multiselect_filtro("Serventia", "SERVENTIA")
 
-        busca = st.text_input("🔎 Buscar hospital/unidade")
+        busca = st.text_input("🔎 Buscar hospital/unidade/observação")
 
-        if st.button("🔄 Atualizar dados", use_container_width=True):
+        if fonte == "Planilha publicada (padrão)" and st.button("🔄 Atualizar dados", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
 
@@ -185,24 +244,28 @@ def painel():
 
     # KPIs
     total = len(df_filtrado)
-    funcionando = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Funcionando").sum()
-    nao_funcionando = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Não funcionando").sum()
-    paralisada = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Paralisada").sum()
-    outros = total - funcionando - nao_funcionando - paralisada
+    ativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Ativa").sum()
+    inativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Inativa").sum()
+    reativacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de reativação").sum()
+    implantacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de implantação").sum()
+    outros = total - ativas - inativas - reativacao - implantacao
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Total de unidades", total)
-    c2.metric("✅ Funcionando", int(funcionando))
-    c3.metric("⛔ Não funcionando", int(nao_funcionando))
-    c4.metric("⏸️ Paralisada", int(paralisada))
-    c5.metric("ℹ️ Outras situações", int(outros))
+    c2.metric("✅ Ativas", int(ativas))
+    c3.metric("⛔ Inativas", int(inativas))
+    c4.metric("♻️ Em reativação", int(reativacao))
+    c5.metric("🚧 Em implantação", int(implantacao))
+
+    if outros:
+        st.caption(f"ℹ️ {int(outros)} unidade(s) em outras situações / sem informação classificável.")
 
     st.markdown("---")
 
-    # gráficos com biblioteca nativa do streamlit
+    # gráficos com biblioteca nativa do streamlit (sem libs externas)
     g1, g2 = st.columns(2)
     with g1:
-        st.markdown("#### Unidades por status de funcionamento")
+        st.markdown("#### Unidades por status")
         st.bar_chart(df_filtrado["STATUS_FUNCIONAMENTO"].value_counts())
     with g2:
         st.markdown("#### Unidades por esfera")
@@ -210,26 +273,27 @@ def painel():
             esfera_counts = df_filtrado[df_filtrado["ESFERA"] != ""]["ESFERA"].value_counts()
             st.bar_chart(esfera_counts)
 
-    st.markdown("#### Unidades por Justiça Aberta x Habilitação CRC")
     g3, g4 = st.columns(2)
     with g3:
+        st.markdown("#### Justiça Aberta")
         if "JUSTIÇA ABERTA" in df_filtrado.columns:
             st.bar_chart(df_filtrado["JUSTIÇA ABERTA"].value_counts())
     with g4:
+        st.markdown("#### Habilitação CRC")
         if "HABILITAÇÃO CRC" in df_filtrado.columns:
             st.bar_chart(df_filtrado["HABILITAÇÃO CRC"].value_counts())
+
+    st.markdown("#### Top 15 municípios com mais unidades")
+    if "MUNICÍPIOS" in df_filtrado.columns:
+        top_municipios = df_filtrado["MUNICÍPIOS"].value_counts().head(15)
+        st.bar_chart(top_municipios)
 
     st.markdown("---")
 
     # tabela detalhada
     st.markdown(f"#### Detalhamento das unidades ({total} registros)")
-    colunas_exibir = [
-        c for c in [
-            "MUNICÍPIOS", "HOSPITAL", "DATA DA INSTALAÇÃO", "ESFERA", "SERVENTIA",
-            "JUSTIÇA ABERTA", "HABILITAÇÃO CRC", "SITUAÇÃO ATUAL", "SITUAÇÃO GERAL",
-            "ÍNDICES IBGE", "OBSERVAÇÕES",
-        ] if c in df_filtrado.columns
-    ]
+    colunas_exibir = [c for c in COLUNAS_ESPERADAS if c in df_filtrado.columns]
+    colunas_exibir += ["STATUS_FUNCIONAMENTO"] if "STATUS_FUNCIONAMENTO" not in colunas_exibir else []
     st.dataframe(df_filtrado[colunas_exibir], use_container_width=True, hide_index=True)
 
     csv_download = df_filtrado[colunas_exibir].to_csv(index=False).encode("utf-8-sig")
