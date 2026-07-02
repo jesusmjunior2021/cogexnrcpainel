@@ -98,16 +98,41 @@ def aplicar_css_mobile_first():
         div[data-baseweb="select"] { min-height: 44px; }
         .stTextInput input { min-height: 44px; font-size: 16px; } /* 16px evita zoom iOS */
 
-        /* Abas roláveis horizontalmente no dedo */
+        /* Abas roláveis no dedo + design em pílulas institucionais */
         div[data-testid="stTabs"] [data-baseweb="tab-list"] {
             overflow-x: auto !important;
             flex-wrap: nowrap !important;
             scrollbar-width: thin;
+            gap: 0.35rem;
+            padding-bottom: 0.3rem;
         }
         div[data-testid="stTabs"] [data-baseweb="tab"] {
             min-height: 44px;
-            padding: 0.4rem 0.9rem;
+            padding: 0.4rem 0.95rem;
             white-space: nowrap;
+            background: var(--secondary-background-color, #f4f2ef);
+            border: 1px solid rgba(123,31,36,.25);
+            border-radius: 999px;
+            font-size: 0.85rem;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {
+            background: #7b1f24;
+            border-color: #7b1f24;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] p {
+            color: #fff !important;
+            font-weight: 600;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab-highlight"],
+        div[data-testid="stTabs"] [data-baseweb="tab-border"] {
+            display: none;  /* pílula substitui o sublinhado padrão */
+        }
+
+        /* Divisores e expanders mais suaves */
+        hr { border-color: rgba(123,31,36,.18) !important; }
+        div[data-testid="stExpander"] {
+            border: 1px solid rgba(123,31,36,.2);
+            border-radius: 10px;
         }
 
         /* Tabelas/dataframes: rolagem horizontal suave */
@@ -142,6 +167,42 @@ aplicar_css_mobile_first()
 DATA_URL_PADRAO = (
     "https://docs.google.com/spreadsheets/d/e/2PACX-1vT73jQ3Ae7I0gSx-UqOvA3C_JznfDQYrb23nLx4jpQXH03i1-ocEzHxnRNZnYTTHQ/pub?output=csv"
 )
+
+# Mesma planilha publicada, em XLSX: entrega TODAS as abas de uma vez.
+DATA_URL_XLSX = (
+    "https://docs.google.com/spreadsheets/d/e/2PACX-1vT73jQ3Ae7I0gSx-UqOvA3C_JznfDQYrb23nLx4jpQXH03i1-ocEzHxnRNZnYTTHQ/pub?output=xlsx"
+)
+
+# Identidade visual por aba (ícone + rótulo curto para a barra de abas).
+# Casamento por nome normalizado; aba desconhecida ganha ícone genérico.
+ABAS_IDENTIDADE = {
+    "UNIDADES INTERLIGADAS":            ("🏥", "Unidades Interligadas"),
+    "MUNICIPIOS PARA INSTALAR":         ("🚧", "Para Instalar"),
+    "STATUS RECEB FORMULARIO":          ("📨", "Formulários"),
+    "MUN. INVIAVEIS DE INSTALACAO":     ("🚫", "Inviáveis"),
+    "PROVIMENTO 09":                    ("📜", "Provimento 09"),
+    "MUNICIPIOS PARA REATIVA":          ("♻️", "Para Reativar"),
+    "TAB ACOMPANHAMENTO ARTICULACAO":   ("🤝", "Articulação"),
+    "INDICES DE SUB-REGISTRO":          ("📉", "Sub-registro"),
+    "CONTATOS":                         ("📞", "Contatos"),
+    "MUNICIPIOS C PIORES INDICES 2":    ("🔻", "Piores Índices"),
+    "OPERADORES":                       ("👤", "Operadores"),
+    "OPERADORES (M,C,E E T)":           ("👥", "Operadores M/C/E/T"),
+    "HOSPITAIS DAS UI":                 ("🏨", "Hospitais"),
+    "UI PARALISADAS E SEM CONTATO":     ("⛔", "Paralisadas/Sem contato"),
+    "HORARIOS DE FUNCIONAMENTO UIS":    ("🕐", "Horários"),
+    "CIDADES COM SELO UNICEF":          ("🏅", "Selo UNICEF"),
+}
+
+
+def identidade_aba(nome_aba: str):
+    n = normalizar_nome(nome_aba)
+    if n in ABAS_IDENTIDADE:                      # 1) casamento exato
+        return ABAS_IDENTIDADE[n]
+    for chave in sorted(ABAS_IDENTIDADE, key=len, reverse=True):
+        if chave in n:                            # 2) chave contida no nome
+            return ABAS_IDENTIDADE[chave]
+    return "📄", str(nome_aba).strip().title()
 
 COLUNAS_ESPERADAS = [
     "MUNICÍPIOS", "HOSPITAL", "DATA DA INSTALAÇÃO", "ESFERA", "SERVENTIA",
@@ -339,10 +400,22 @@ def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     unnamed = [c for c in df.columns if str(c).startswith("Unnamed")]
     df = df.drop(columns=unnamed, errors="ignore")
-    df.columns = [str(c).strip() for c in df.columns]
+    # cabeçalhos "lixo" (texto colado de nota/análise) viram rótulo curto
+    df.columns = [
+        (str(c).strip().split("\n")[0][:60] + "…")
+        if len(str(c).strip()) > 60 else str(c).strip()
+        for c in df.columns
+    ]
 
     for c in df.columns:
         df[c] = df[c].apply(lambda x: "" if pd.isna(x) else str(x).strip())
+
+    # remove colunas 100% vazias (sanitização em memória; fonte intacta)
+    colunas_vazias = [c for c in df.columns if (df[c] == "").all()]
+    df = df.drop(columns=colunas_vazias, errors="ignore")
+    # remove linhas 100% vazias
+    if len(df.columns):
+        df = df[~(df == "").all(axis=1)].reset_index(drop=True)
 
     col_status = detectar_coluna(df, ["SITUAÇÃO ATUAL", "SITUACAO ATUAL", "STATUS"])
     if col_status:
@@ -365,10 +438,19 @@ def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=600, show_spinner="Carregando dados da planilha...")
-def load_data_url(url: str) -> dict:
-    df = pd.read_csv(url)
-    return {"Unidades Interligadas": tratar_dataframe(df)}
+@st.cache_data(ttl=600, show_spinner="Carregando todas as abas da planilha...")
+def load_data_url(url_csv: str, url_xlsx: str) -> dict:
+    """Carrega TODAS as abas da planilha publicada (XLSX). Se o XLSX
+    falhar (rede/permissão), cai para o CSV (apenas a primeira aba)."""
+    try:
+        planilhas = pd.read_excel(url_xlsx, sheet_name=None)
+        return {
+            str(aba).strip(): tratar_dataframe(df)
+            for aba, df in planilhas.items()
+        }
+    except Exception:
+        df = pd.read_csv(url_csv)
+        return {"UNIDADES INTERLIGADAS": tratar_dataframe(df)}
 
 
 def load_data_upload(arquivo) -> dict:
@@ -500,7 +582,8 @@ def gerar_relatorio_html(titulo: str, subtitulo: str, df_rel: pd.DataFrame,
 # ----------------------------------------------------------------------------
 # ABA: VISÃO EXECUTIVA + CENTRAL DE RELATÓRIOS
 # ----------------------------------------------------------------------------
-def renderizar_visao_executiva(df: pd.DataFrame):
+def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
+    abas = abas or {}
     ex = calcular_executivo(df)
     col_mun = ex["col_municipio"]
 
@@ -540,7 +623,55 @@ def renderizar_visao_executiva(df: pd.DataFrame):
 
     st.markdown("---")
 
-    # ---------------- CENTRAL DE RELATÓRIOS ----------------
+    # ---------------- REFLEXO DAS DEMAIS ABAS (contexto executivo) --------
+    def achar_aba(fragmento):
+        for nome, dfa in abas.items():
+            if fragmento in normalizar_nome(nome):
+                return nome, dfa
+        return None, None
+
+    nome_sub, df_sub = achar_aba("SUB-REGISTRO")
+    nome_piores, df_piores = achar_aba("PIORES INDICES")
+    nome_paral, df_paral = achar_aba("PARALISADAS")
+    nome_inv, df_inv = achar_aba("INVIAVEIS")
+
+    if any(x is not None for x in (df_sub, df_piores, df_paral, df_inv)):
+        st.markdown("### 🔎 Contexto das demais abas")
+
+        e1, e2, e3 = st.columns(3)
+        if df_paral is not None and len(df_paral.columns) >= 1:
+            col_sem_contato = detectar_coluna(df_paral, ["SEM CONTATO"])
+            col_paralisadas = detectar_coluna(df_paral, ["PARALIZADAS", "PARALISADAS"])
+            n_sem_contato = int((df_paral[col_sem_contato] != "").sum()) if col_sem_contato else 0
+            n_paralisadas = int((df_paral[col_paralisadas] != "").sum()) if col_paralisadas else 0
+            e1.metric("📵 UIs sem contato", n_sem_contato)
+            e2.metric("⛔ UIs paralisadas (lista)", n_paralisadas)
+        if df_inv is not None:
+            e3.metric("🚫 Municípios inviáveis de instalação", len(df_inv))
+
+        if df_sub is not None:
+            col_cidade = detectar_coluna(df_sub, ["CIDADE", "MUNICIPIO"])
+            col_pct = detectar_coluna(df_sub, ["SUB-REGISTRO", "SUB REGISTRO"])
+            if col_cidade and col_pct:
+                df_rank = df_sub[[col_cidade, col_pct]].copy()
+                df_rank["_pct"] = pd.to_numeric(
+                    df_rank[col_pct].astype(str)
+                    .str.replace("%", "", regex=False)
+                    .str.replace(",", ".", regex=False),
+                    errors="coerce",
+                )
+                df_rank = df_rank.dropna(subset=["_pct"]).sort_values("_pct", ascending=False)
+                st.markdown(f"#### 📉 Top 10 piores índices de sub-registro (fonte: aba “{nome_sub}”)")
+                st.dataframe(
+                    df_rank.head(10)[[col_cidade, col_pct]],
+                    use_container_width=True, hide_index=True,
+                )
+
+        if df_piores is not None:
+            with st.expander(f"🔻 Detalhe — {len(df_piores)} municípios com piores índices (aba “{nome_piores}”)"):
+                st.dataframe(df_piores, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
     st.markdown("### 🖨️ Central de Relatórios")
     st.caption(
         "Escolha a categoria, visualize a relação nominal e baixe em CSV "
@@ -653,6 +784,7 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
     col_justica_aberta = detectar_coluna(df, ["JUSTIÇA ABERTA", "JUSTICA ABERTA"])
     col_crc = detectar_coluna(df, ["HABILITAÇÃO CRC", "HABILITACAO CRC", "CRC"])
     col_serventia = detectar_coluna(df, ["SERVENTIA"])
+    tem_status = (df["STATUS_FUNCIONAMENTO"] != "Sem informação").any()
 
     with st.sidebar:
         st.markdown(f"#### Filtros — {chave}")
@@ -666,7 +798,9 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
         f_municipio = multiselect_filtro("Município", col_municipio, "municipio")
         f_esfera = multiselect_filtro("Esfera", col_esfera, "esfera")
         f_status = multiselect_filtro(
-            "Status (Ativa/Inativa/...)", "STATUS_FUNCIONAMENTO", "status"
+            "Status (Ativa/Inativa/...)",
+            "STATUS_FUNCIONAMENTO" if tem_status else None,
+            "status",
         )
         f_situacao_geral = multiselect_filtro("Situação geral", col_situacao_geral, "sitgeral")
         f_justica_aberta = multiselect_filtro("Justiça Aberta", col_justica_aberta, "justaberta")
@@ -697,32 +831,37 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
         df_filtrado = df_filtrado[mask]
 
     total = len(df_filtrado)
-    ativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Ativa").sum()
-    inativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Inativa").sum()
-    reativacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de reativação").sum()
-    implantacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de implantação").sum()
-    outros = total - ativas - inativas - reativacao - implantacao
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Total de unidades", total)
-    c2.metric("✅ Ativas", int(ativas))
-    c3.metric("⛔ Inativas", int(inativas))
-    c4.metric("♻️ Em reativação", int(reativacao))
-    c5.metric("🚧 Em implantação", int(implantacao))
-    if outros:
-        st.caption(f"ℹ️ {int(outros)} unidade(s) em outras situações / sem informação classificável.")
+    if tem_status:
+        ativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Ativa").sum()
+        inativas = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Inativa").sum()
+        reativacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de reativação").sum()
+        implantacao = (df_filtrado["STATUS_FUNCIONAMENTO"] == "Em fase de implantação").sum()
+        outros = total - ativas - inativas - reativacao - implantacao
+
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Total de unidades", total)
+        c2.metric("✅ Ativas", int(ativas))
+        c3.metric("⛔ Inativas", int(inativas))
+        c4.metric("♻️ Em reativação", int(reativacao))
+        c5.metric("🚧 Em implantação", int(implantacao))
+        if outros:
+            st.caption(f"ℹ️ {int(outros)} unidade(s) em outras situações / sem informação classificável.")
+    else:
+        st.metric("Total de registros nesta aba", total)
 
     st.markdown("---")
 
-    g1, g2 = st.columns(2)
-    with g1:
-        st.markdown("#### Unidades por status")
-        st.bar_chart(df_filtrado["STATUS_FUNCIONAMENTO"].value_counts())
-    with g2:
-        if col_esfera:
-            st.markdown("#### Unidades por esfera")
-            esfera_counts = df_filtrado[df_filtrado[col_esfera] != ""][col_esfera].value_counts()
-            st.bar_chart(esfera_counts)
+    if tem_status:
+        g1, g2 = st.columns(2)
+        with g1:
+            st.markdown("#### Unidades por status")
+            st.bar_chart(df_filtrado["STATUS_FUNCIONAMENTO"].value_counts())
+        with g2:
+            if col_esfera:
+                st.markdown("#### Unidades por esfera")
+                esfera_counts = df_filtrado[df_filtrado[col_esfera] != ""][col_esfera].value_counts()
+                st.bar_chart(esfera_counts)
 
     if col_justica_aberta or col_crc:
         g3, g4 = st.columns(2)
@@ -740,13 +879,15 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
         st.bar_chart(df_filtrado[col_municipio].value_counts().head(15))
 
     st.markdown("---")
-    secao_municipios_sem_ui(df, col_municipio)
-    st.markdown("---")
+    if tem_status:
+        secao_municipios_sem_ui(df, col_municipio)
+        st.markdown("---")
 
     st.markdown(f"#### Detalhamento ({total} registros)")
     colunas_exibir = [c for c in df_filtrado.columns
                       if c not in ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO")]
-    colunas_exibir += ["STATUS_FUNCIONAMENTO"]
+    if tem_status:
+        colunas_exibir += ["STATUS_FUNCIONAMENTO"]
     st.dataframe(df_filtrado[colunas_exibir], use_container_width=True, hide_index=True)
 
     csv_download = df_filtrado[colunas_exibir].to_csv(index=False).encode("utf-8-sig")
@@ -777,7 +918,7 @@ def painel():
         abas = None
         if fonte == "Planilha publicada (padrão)":
             try:
-                abas = load_data_url(DATA_URL_PADRAO)
+                abas = load_data_url(DATA_URL_PADRAO, DATA_URL_XLSX)
             except Exception as e:
                 st.error(f"Não foi possível carregar a planilha publicada: {e}")
         else:
@@ -802,18 +943,25 @@ def painel():
 
     nomes_abas = list(abas.keys())
 
-    # A primeira aba de dados alimenta a Visão Executiva; se houver várias
-    # abas no XLSX, a executiva usa a primeira (base principal de UIs).
-    df_principal = abas[nomes_abas[0]]
+    # Base principal de UIs: aba "UNIDADES INTERLIGADAS" (ou a primeira).
+    nome_principal = next(
+        (n for n in nomes_abas if "UNIDADES INTERLIGADAS" in normalizar_nome(n)),
+        nomes_abas[0],
+    )
+    df_principal = abas[nome_principal]
 
-    nomes_tabs = ["📋 Visão Executiva"] + nomes_abas
-    tabs = st.tabs(nomes_tabs)
+    rotulos = ["📋 Visão Executiva"] + [
+        f"{identidade_aba(n)[0]} {identidade_aba(n)[1]}" for n in nomes_abas
+    ]
+    st.caption(f"🗂️ {len(nomes_abas)} aba(s) carregada(s) da fonte — 100% dos registros.")
+    tabs = st.tabs(rotulos)
 
     with tabs[0]:
-        renderizar_visao_executiva(df_principal)
+        renderizar_visao_executiva(df_principal, abas)
 
     for tab, nome_aba in zip(tabs[1:], nomes_abas):
         with tab:
+            st.caption(f"Fonte: aba “{nome_aba}” da planilha oficial · {len(abas[nome_aba])} registros")
             renderizar_aba(abas[nome_aba], nome_aba)
 
 
