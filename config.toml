@@ -1,0 +1,15 @@
+# .streamlit/config.toml — tema institucional COGEX/NRC
+# Coloque este arquivo em .streamlit/config.toml no repositório.
+# Fixa o tema CLARO com a paleta oficial (marrom, vinho, amarelo-queimado,
+# preto), impedindo que o modo escuro do navegador/SO inverta as cores.
+
+[theme]
+base = "light"
+primaryColor = "#7B1F24"            # vinho (destaques, foco, seleção)
+backgroundColor = "#FAF6EF"         # creme institucional
+secondaryBackgroundColor = "#F1EAE0" # painéis/inputs
+textColor = "#1C1713"               # preto
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
