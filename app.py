@@ -40,8 +40,104 @@ st.set_page_config(
     page_title="NRC PAINEL GERENCIAL",
     page_icon="🏛️",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",  # mobile-first: conteúdo primeiro
 )
+
+# ----------------------------------------------------------------------------
+# CSS GLOBAL MOBILE-FIRST
+# Estratégia: base pensada para tela estreita (celular da Corregedora/equipe);
+# media queries só ADICIONAM refinamento em telas maiores. Colunas do
+# Streamlit viram grade fluida que quebra linha; métricas viram cards com
+# alvo de toque >= 44px; botões e selects em largura total.
+# ----------------------------------------------------------------------------
+def aplicar_css_mobile_first():
+    st.markdown(
+        """
+        <style>
+        /* ---------- BASE (mobile) ---------- */
+        .block-container {
+            padding: 0.8rem 0.7rem 3rem 0.7rem !important;
+            max-width: 100% !important;
+        }
+        h1, .stMarkdown h2 { font-size: 1.25rem !important; }
+        .stMarkdown h3 { font-size: 1.05rem !important; }
+        .stMarkdown h4 { font-size: 0.95rem !important; }
+
+        /* Colunas: em vez de espremer lado a lado, quebram em grade fluida */
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+            gap: 0.5rem !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 1 1 calc(50% - 0.5rem) !important;   /* 2 cards por linha no celular */
+            min-width: calc(50% - 0.5rem) !important;
+        }
+
+        /* Métricas como cards tocáveis */
+        div[data-testid="stMetric"] {
+            background: var(--secondary-background-color, #f4f2ef);
+            border: 1px solid rgba(123,31,36,.25);
+            border-left: 4px solid #7b1f24;
+            border-radius: 10px;
+            padding: 0.55rem 0.7rem;
+            min-height: 44px;
+        }
+        div[data-testid="stMetricValue"] { font-size: 1.35rem !important; }
+        div[data-testid="stMetricLabel"] {
+            font-size: 0.72rem !important;
+            white-space: normal !important;   /* rótulo quebra linha, não corta */
+        }
+
+        /* Botões, downloads e selects: largura total, alvo de toque 44px+ */
+        .stButton > button, .stDownloadButton > button {
+            width: 100% !important;
+            min-height: 46px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+        }
+        div[data-baseweb="select"] { min-height: 44px; }
+        .stTextInput input { min-height: 44px; font-size: 16px; } /* 16px evita zoom iOS */
+
+        /* Abas roláveis horizontalmente no dedo */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            overflow-x: auto !important;
+            flex-wrap: nowrap !important;
+            scrollbar-width: thin;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab"] {
+            min-height: 44px;
+            padding: 0.4rem 0.9rem;
+            white-space: nowrap;
+        }
+
+        /* Tabelas/dataframes: rolagem horizontal suave */
+        div[data-testid="stDataFrame"] { overflow-x: auto !important; }
+
+        /* ---------- TABLET (>= 641px): 3 cards por linha ---------- */
+        @media (min-width: 641px) {
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+                flex: 1 1 calc(33.33% - 0.5rem) !important;
+                min-width: calc(33.33% - 0.5rem) !important;
+            }
+            .block-container { padding: 1.2rem 1.5rem 3rem 1.5rem !important; }
+        }
+
+        /* ---------- DESKTOP (>= 1024px): layout original fluido ---------- */
+        @media (min-width: 1024px) {
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+                flex: 1 1 0 !important;
+                min-width: 0 !important;
+            }
+            h1, .stMarkdown h2 { font-size: 1.6rem !important; }
+            div[data-testid="stMetricValue"] { font-size: 1.7rem !important; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+aplicar_css_mobile_first()
 
 DATA_URL_PADRAO = (
     "https://docs.google.com/spreadsheets/d/e/2PACX-1vT73jQ3Ae7I0gSx-UqOvA3C_JznfDQYrb23nLx4jpQXH03i1-ocEzHxnRNZnYTTHQ/pub?output=csv"
@@ -351,31 +447,38 @@ def gerar_relatorio_html(titulo: str, subtitulo: str, df_rel: pd.DataFrame,
             celulas = "".join(f"<td>{row.get(c, '')}</td>" for c in colunas)
             corpo += f"<tr><td>{i}</td>{celulas}</tr>"
         tabela = (
-            f"<table><thead><tr><th>#</th>{cabecalho}</tr></thead>"
-            f"<tbody>{corpo}</tbody></table>"
+            f"<div class='tabela-wrap'><table><thead><tr><th>#</th>{cabecalho}</tr></thead>"
+            f"<tbody>{corpo}</tbody></table></div>"
         )
     else:
         tabela = "<p><em>Nenhum registro nesta categoria.</em></p>"
 
     return f"""<!DOCTYPE html>
 <html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{titulo}</title>
 <style>
-  body {{ font-family: Arial, Helvetica, sans-serif; color:#1a1a1a; margin:32px; }}
+  body {{ font-family: Arial, Helvetica, sans-serif; color:#1a1a1a; margin:14px; }}
   .cab {{ text-align:center; border-bottom:3px solid #7b1f24; padding-bottom:12px; margin-bottom:18px; }}
-  .cab h1 {{ margin:0; font-size:20px; }}
-  .cab h2 {{ margin:4px 0 0; font-size:14px; font-weight:normal; color:#555; }}
-  .cab .org {{ font-size:12px; color:#7b1f24; font-weight:bold; letter-spacing:1px; }}
-  .kpis {{ display:flex; gap:14px; flex-wrap:wrap; margin:16px 0; }}
-  .kpi {{ border:1px solid #ccc; border-radius:8px; padding:10px 18px; text-align:center; min-width:130px; }}
-  .kpi-num {{ font-size:26px; font-weight:bold; color:#7b1f24; }}
-  .kpi-lab {{ font-size:11px; color:#555; text-transform:uppercase; }}
-  table {{ width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; }}
-  th, td {{ border:1px solid #bbb; padding:5px 7px; text-align:left; }}
+  .cab h1 {{ margin:0; font-size:17px; }}
+  .cab h2 {{ margin:4px 0 0; font-size:13px; font-weight:normal; color:#555; }}
+  .cab .org {{ font-size:11px; color:#7b1f24; font-weight:bold; letter-spacing:1px; }}
+  .kpis {{ display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; margin:16px 0; }}
+  .kpi {{ border:1px solid #ccc; border-radius:8px; padding:10px 8px; text-align:center; }}
+  .kpi-num {{ font-size:24px; font-weight:bold; color:#7b1f24; }}
+  .kpi-lab {{ font-size:10px; color:#555; text-transform:uppercase; }}
+  .tabela-wrap {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
+  table {{ width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; min-width:520px; }}
+  th, td {{ border:1px solid #bbb; padding:6px 7px; text-align:left; }}
   th {{ background:#7b1f24; color:#fff; }}
   tr:nth-child(even) td {{ background:#f6f2f2; }}
   .rod {{ margin-top:24px; font-size:11px; color:#777; border-top:1px solid #ccc; padding-top:8px; }}
-  @media print {{ body {{ margin:12mm; }} }}
+  @media (min-width: 700px) {{
+    body {{ margin:32px; }}
+    .cab h1 {{ font-size:20px; }}
+    .kpis {{ grid-template-columns:repeat(4, 1fr); }}
+  }}
+  @media print {{ body {{ margin:12mm; }} .tabela-wrap {{ overflow:visible; }} table {{ min-width:0; }} }}
 </style></head><body>
 <div class="cab">
   <div class="org">PODER JUDICIÁRIO · TRIBUNAL DE JUSTIÇA DO MARANHÃO</div>
@@ -421,21 +524,19 @@ def renderizar_visao_executiva(df: pd.DataFrame):
     b4.metric("🚧 Previsão de instalação", len(ex["implantacao"]))
     b5.metric("♻️ Em reativação", len(ex["reativacao"]))
 
-    # LINHA 3 — alerta de produção
-    c1, c2 = st.columns([1, 3])
-    c1.metric("⚠️ Ativas SEM produção / índice baixo", len(ex["ativas_sem_producao"]))
-    with c2:
+    # LINHA 3 — alerta de produção (fluxo vertical: melhor leitura no celular)
+    st.metric("⚠️ Ativas SEM produção / índice baixo", len(ex["ativas_sem_producao"]))
+    st.caption(
+        "Critério auditável: UI classificada como Ativa cujo texto de "
+        "SITUAÇÃO GERAL / ÍNDICES IBGE / OBSERVAÇÕES contém sinal explícito "
+        "de ausência de registro, ausência de parto ou índice baixo. "
+        "Nenhum registro é marcado por inferência sem sinal no texto."
+    )
+    if len(ex["outras"]):
         st.caption(
-            "Critério auditável: UI classificada como Ativa cujo texto de "
-            "SITUAÇÃO GERAL / ÍNDICES IBGE / OBSERVAÇÕES contém sinal explícito "
-            "de ausência de registro, ausência de parto ou índice baixo. "
-            "Nenhum registro é marcado por inferência sem sinal no texto."
+            f"ℹ️ {len(ex['outras'])} unidade(s) em outra situação / sem "
+            "informação classificável — constam no relatório completo."
         )
-        if len(ex["outras"]):
-            st.caption(
-                f"ℹ️ {len(ex['outras'])} unidade(s) em outra situação / sem "
-                "informação classificável — constam no relatório completo."
-            )
 
     st.markdown("---")
 
@@ -484,31 +585,29 @@ def renderizar_visao_executiva(df: pd.DataFrame):
         ("Ativas sem produção", len(ex["ativas_sem_producao"])),
     ]
 
-    d1, d2 = st.columns(2)
-    with d1:
-        csv_bytes = df_rel[cols_rel].to_csv(index=False).encode("utf-8-sig") if len(df_rel) else "sem registros".encode("utf-8")
-        st.download_button(
-            "⬇️ Baixar CSV desta categoria",
-            data=csv_bytes,
-            file_name=f"nrc_relatorio_{normalizar_nome(escolha).lower().replace(' ', '_')[:60]}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    with d2:
-        html_rel = gerar_relatorio_html(
-            titulo=f"RELATÓRIO — {escolha.split(' ', 1)[-1].upper()}",
-            subtitulo="Situação das Unidades Interligadas de Registro Civil de Nascimento",
-            df_rel=df_rel if len(df_rel) else None,
-            resumo_kpis=resumo_kpis,
-            colunas=cols_rel,
-        )
-        st.download_button(
-            "🖨️ Baixar relatório formatado (HTML → imprimir/PDF)",
-            data=html_rel.encode("utf-8"),
-            file_name=f"nrc_relatorio_{normalizar_nome(escolha).lower().replace(' ', '_')[:60]}.html",
-            mime="text/html",
-            use_container_width=True,
-        )
+    # Downloads empilhados (largura total — alvo de toque no celular)
+    csv_bytes = df_rel[cols_rel].to_csv(index=False).encode("utf-8-sig") if len(df_rel) else "sem registros".encode("utf-8")
+    st.download_button(
+        "⬇️ Baixar CSV desta categoria",
+        data=csv_bytes,
+        file_name=f"nrc_relatorio_{normalizar_nome(escolha).lower().replace(' ', '_')[:60]}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+    html_rel = gerar_relatorio_html(
+        titulo=f"RELATÓRIO — {escolha.split(' ', 1)[-1].upper()}",
+        subtitulo="Situação das Unidades Interligadas de Registro Civil de Nascimento",
+        df_rel=df_rel if len(df_rel) else None,
+        resumo_kpis=resumo_kpis,
+        colunas=cols_rel,
+    )
+    st.download_button(
+        "🖨️ Baixar relatório formatado (HTML → imprimir/PDF)",
+        data=html_rel.encode("utf-8"),
+        file_name=f"nrc_relatorio_{normalizar_nome(escolha).lower().replace(' ', '_')[:60]}.html",
+        mime="text/html",
+        use_container_width=True,
+    )
 
     st.caption(
         "💡 O arquivo HTML abre em qualquer navegador já formatado com "
@@ -699,6 +798,7 @@ def painel():
 
     st.markdown("## 🏛️ NRC PAINEL GERENCIAL")
     st.caption("Unidades Interligadas - Corregedoria Geral de Justiça Extrajudicial (COGEX/MA)")
+    st.caption("📱 Filtros e fonte de dados: toque no menu **»** no canto superior esquerdo.")
 
     nomes_abas = list(abas.keys())
 
