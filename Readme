@@ -1,0 +1,59 @@
+# NRC PAINEL GERENCIAL
+
+Painel gerencial das Unidades Interligadas (NRC/COGEX/TJMA), feito em Streamlit.
+Os dados são carregados automaticamente da planilha Google Sheets publicada em CSV
+(link já embutido em `app.py`, na variável `DATA_URL`).
+
+## Rodar localmente
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+Login local padrão (apenas teste, troque em produção): `COGEX` / `cogex@nrc`
+
+## Publicar no GitHub
+
+```bash
+git init
+git add .
+git commit -m "NRC Painel Gerencial"
+git branch -M main
+git remote add origin https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git
+git push -u origin main
+```
+
+⚠️ O arquivo `.streamlit/secrets.toml` (com a senha real) está no `.gitignore`
+e **não** deve ser enviado ao GitHub. Use o `secrets.toml.example` como modelo.
+
+## Publicar no Streamlit Community Cloud
+
+1. Acesse https://share.streamlit.io e conecte sua conta do GitHub.
+2. Clique em "New app", escolha o repositório e o arquivo `app.py`.
+3. Antes de publicar (ou depois, em Settings > Secrets), cole:
+
+```toml
+[credentials]
+username = "COGEX"
+password = "sua_senha_definitiva"
+```
+
+4. Clique em Deploy. Pronto — o painel ficará disponível numa URL pública,
+   mas protegido por login.
+
+## Atualizar os dados
+
+Basta editar a planilha Google Sheets de origem e clicar em "🔄 Atualizar dados"
+na barra lateral do painel (os dados também são recarregados automaticamente
+a cada 10 minutos).
+
+## Estrutura
+
+```
+app.py                                # aplicação Streamlit (arquivo único)
+requirements.txt                      # dependências
+.streamlit/secrets.toml.example       # modelo de credenciais
+.gitignore
+README.md
+```
