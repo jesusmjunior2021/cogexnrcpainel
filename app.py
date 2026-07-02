@@ -44,118 +44,201 @@ st.set_page_config(
 )
 
 # ----------------------------------------------------------------------------
-# CSS GLOBAL MOBILE-FIRST
-# Estratégia: base pensada para tela estreita (celular da Corregedora/equipe);
-# media queries só ADICIONAM refinamento em telas maiores. Colunas do
-# Streamlit viram grade fluida que quebra linha; métricas viram cards com
-# alvo de toque >= 44px; botões e selects em largura total.
+# CSS GLOBAL MOBILE-FIRST + PALETA INSTITUCIONAL COGEX
+# Paleta oficial: MARROM, VINHO, AMARELO-QUEIMADO e PRETO.
+# Todas as cores são declaradas EXPLICITAMENTE (fundo E texto de cada
+# componente), de modo que o app fica idêntico com o navegador/SO em tema
+# claro ou escuro — corrige o defeito de letra branca sobre fundo branco.
 # ----------------------------------------------------------------------------
+COGEX_PRETO = "#1C1713"          # texto principal
+COGEX_MARROM = "#5C4033"         # estrutura / sidebar
+COGEX_MARROM_ESCURO = "#3E2B22"  # sidebar fundo
+COGEX_VINHO = "#7B1F24"          # destaque principal
+COGEX_AMARELO = "#B8862B"        # amarelo-queimado (acento)
+COGEX_CREME = "#FAF6EF"          # fundo do app
+COGEX_CARD = "#FFFFFF"           # fundo de cards
+COGEX_CINZA = "#6B6259"          # texto secundário
+
+
 def aplicar_css_mobile_first():
     st.markdown(
-        """
+        f"""
         <style>
+        /* ---------- PALETA FORÇADA (independente de dark/light) ---------- */
+        .stApp, [data-testid="stAppViewContainer"] {{
+            background: {COGEX_CREME} !important;
+            color: {COGEX_PRETO} !important;
+        }}
+        [data-testid="stHeader"] {{ background: {COGEX_CREME} !important; }}
+        .stApp h1, .stApp h2, .stApp h3, .stApp h4,
+        .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown span,
+        label, .stRadio label, .stSelectbox label, .stTextInput label,
+        .stMultiSelect label, [data-testid="stWidgetLabel"] p {{
+            color: {COGEX_PRETO} !important;
+        }}
+        .stCaption, [data-testid="stCaptionContainer"] p, small {{
+            color: {COGEX_CINZA} !important;
+        }}
+
+        /* Sidebar: marrom escuro com texto claro (contraste garantido) */
+        [data-testid="stSidebar"] {{
+            background: {COGEX_MARROM_ESCURO} !important;
+        }}
+        [data-testid="stSidebar"] * {{ color: #F3EDE3 !important; }}
+        [data-testid="stSidebar"] .stTextInput input,
+        [data-testid="stSidebar"] div[data-baseweb="select"] > div {{
+            background: #FFFFFF !important;
+            color: {COGEX_PRETO} !important;
+        }}
+        [data-testid="stSidebar"] hr {{ border-color: {COGEX_AMARELO} !important; }}
+
+        /* Inputs/selects da área principal: fundo branco, texto preto */
+        .stTextInput input, div[data-baseweb="select"] > div,
+        [data-baseweb="popover"] li {{
+            background: #FFFFFF !important;
+            color: {COGEX_PRETO} !important;
+        }}
+        [data-baseweb="menu"] {{ background: #FFFFFF !important; }}
+
+        /* Dataframes: fundo claro sempre */
+        div[data-testid="stDataFrame"] {{
+            background: {COGEX_CARD} !important;
+            border: 1px solid {COGEX_MARROM}33;
+            border-radius: 10px;
+            overflow-x: auto !important;
+        }}
+
         /* ---------- BASE (mobile) ---------- */
-        .block-container {
+        .block-container {{
             padding: 0.8rem 0.7rem 3rem 0.7rem !important;
             max-width: 100% !important;
-        }
-        h1, .stMarkdown h2 { font-size: 1.25rem !important; }
-        .stMarkdown h3 { font-size: 1.05rem !important; }
-        .stMarkdown h4 { font-size: 0.95rem !important; }
+        }}
+        h1, .stMarkdown h2 {{ font-size: 1.25rem !important; }}
+        .stMarkdown h3 {{
+            font-size: 1.05rem !important;
+            border-left: 4px solid {COGEX_AMARELO};
+            padding-left: 0.5rem;
+        }}
+        .stMarkdown h4 {{ font-size: 0.95rem !important; }}
 
-        /* Colunas: em vez de espremer lado a lado, quebram em grade fluida */
-        div[data-testid="stHorizontalBlock"] {
+        div[data-testid="stHorizontalBlock"] {{
             flex-wrap: wrap !important;
             gap: 0.5rem !important;
-        }
-        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
-            flex: 1 1 calc(50% - 0.5rem) !important;   /* 2 cards por linha no celular */
+        }}
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
+            flex: 1 1 calc(50% - 0.5rem) !important;
             min-width: calc(50% - 0.5rem) !important;
-        }
+        }}
 
-        /* Métricas como cards tocáveis */
-        div[data-testid="stMetric"] {
-            background: var(--secondary-background-color, #f4f2ef);
-            border: 1px solid rgba(123,31,36,.25);
-            border-left: 4px solid #7b1f24;
+        /* Métricas: card branco, número vinho, rótulo marrom — sempre legível */
+        div[data-testid="stMetric"] {{
+            background: {COGEX_CARD} !important;
+            border: 1px solid {COGEX_MARROM}40;
+            border-left: 4px solid {COGEX_VINHO};
             border-radius: 10px;
             padding: 0.55rem 0.7rem;
             min-height: 44px;
-        }
-        div[data-testid="stMetricValue"] { font-size: 1.35rem !important; }
-        div[data-testid="stMetricLabel"] {
+            box-shadow: 0 1px 3px rgba(28,23,19,.07);
+        }}
+        div[data-testid="stMetricValue"], div[data-testid="stMetricValue"] div {{
+            font-size: 1.35rem !important;
+            color: {COGEX_VINHO} !important;
+        }}
+        div[data-testid="stMetricLabel"], div[data-testid="stMetricLabel"] p {{
             font-size: 0.72rem !important;
-            white-space: normal !important;   /* rótulo quebra linha, não corta */
-        }
+            white-space: normal !important;
+            color: {COGEX_MARROM} !important;
+            font-weight: 600;
+        }}
 
-        /* Botões, downloads e selects: largura total, alvo de toque 44px+ */
-        .stButton > button, .stDownloadButton > button {
+        /* Botões: vinho sólido; download: contorno marrom */
+        .stButton > button {{
             width: 100% !important;
             min-height: 46px;
             border-radius: 10px;
             font-size: 0.95rem;
-        }
-        div[data-baseweb="select"] { min-height: 44px; }
-        .stTextInput input { min-height: 44px; font-size: 16px; } /* 16px evita zoom iOS */
+            background: {COGEX_VINHO} !important;
+            color: #FFFFFF !important;
+            border: none !important;
+        }}
+        .stDownloadButton > button {{
+            width: 100% !important;
+            min-height: 46px;
+            border-radius: 10px;
+            font-size: 0.95rem;
+            background: #FFFFFF !important;
+            color: {COGEX_MARROM} !important;
+            border: 1.5px solid {COGEX_MARROM} !important;
+            font-weight: 600;
+        }}
+        .stButton > button:hover, .stDownloadButton > button:hover {{
+            border-color: {COGEX_AMARELO} !important;
+            color: {COGEX_AMARELO} !important;
+        }}
+        .stButton > button:hover {{ background: {COGEX_MARROM} !important; color:#fff !important; }}
+        .stTextInput input {{ min-height: 44px; font-size: 16px; }}
 
-        /* Abas roláveis no dedo + design em pílulas institucionais */
-        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+        /* Abas em pílulas: creme → ativa em vinho */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {{
             overflow-x: auto !important;
             flex-wrap: nowrap !important;
             scrollbar-width: thin;
             gap: 0.35rem;
             padding-bottom: 0.3rem;
-        }
-        div[data-testid="stTabs"] [data-baseweb="tab"] {
+        }}
+        div[data-testid="stTabs"] [data-baseweb="tab"] {{
             min-height: 44px;
             padding: 0.4rem 0.95rem;
             white-space: nowrap;
-            background: var(--secondary-background-color, #f4f2ef);
-            border: 1px solid rgba(123,31,36,.25);
+            background: {COGEX_CARD} !important;
+            border: 1px solid {COGEX_MARROM}55;
             border-radius: 999px;
             font-size: 0.85rem;
-        }
-        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {
-            background: #7b1f24;
-            border-color: #7b1f24;
-        }
-        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] p {
-            color: #fff !important;
+        }}
+        div[data-testid="stTabs"] [data-baseweb="tab"] p {{ color: {COGEX_MARROM} !important; }}
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {{
+            background: {COGEX_VINHO} !important;
+            border-color: {COGEX_VINHO};
+        }}
+        div[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] p {{
+            color: #FFFFFF !important;
             font-weight: 600;
-        }
+        }}
         div[data-testid="stTabs"] [data-baseweb="tab-highlight"],
-        div[data-testid="stTabs"] [data-baseweb="tab-border"] {
-            display: none;  /* pílula substitui o sublinhado padrão */
-        }
+        div[data-testid="stTabs"] [data-baseweb="tab-border"] {{ display: none; }}
 
-        /* Divisores e expanders mais suaves */
-        hr { border-color: rgba(123,31,36,.18) !important; }
-        div[data-testid="stExpander"] {
-            border: 1px solid rgba(123,31,36,.2);
+        hr {{ border-color: {COGEX_MARROM}30 !important; }}
+        div[data-testid="stExpander"] {{
+            border: 1px solid {COGEX_MARROM}40;
             border-radius: 10px;
-        }
+            background: {COGEX_CARD};
+        }}
+        div[data-testid="stExpander"] summary,
+        div[data-testid="stExpander"] p {{ color: {COGEX_PRETO} !important; }}
 
-        /* Tabelas/dataframes: rolagem horizontal suave */
-        div[data-testid="stDataFrame"] { overflow-x: auto !important; }
+        /* Alertas/infos do Streamlit legíveis na paleta */
+        div[data-testid="stAlert"] {{ color: {COGEX_PRETO} !important; }}
 
-        /* ---------- TABLET (>= 641px): 3 cards por linha ---------- */
-        @media (min-width: 641px) {
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        /* ---------- TABLET (>= 641px) ---------- */
+        @media (min-width: 641px) {{
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
                 flex: 1 1 calc(33.33% - 0.5rem) !important;
                 min-width: calc(33.33% - 0.5rem) !important;
-            }
-            .block-container { padding: 1.2rem 1.5rem 3rem 1.5rem !important; }
-        }
+            }}
+            .block-container {{ padding: 1.2rem 1.5rem 3rem 1.5rem !important; }}
+        }}
 
-        /* ---------- DESKTOP (>= 1024px): layout original fluido ---------- */
-        @media (min-width: 1024px) {
-            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        /* ---------- DESKTOP (>= 1024px) ---------- */
+        @media (min-width: 1024px) {{
+            div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
                 flex: 1 1 0 !important;
                 min-width: 0 !important;
-            }
-            h1, .stMarkdown h2 { font-size: 1.6rem !important; }
-            div[data-testid="stMetricValue"] { font-size: 1.7rem !important; }
-        }
+            }}
+            h1, .stMarkdown h2 {{ font-size: 1.6rem !important; }}
+            div[data-testid="stMetricValue"], div[data-testid="stMetricValue"] div {{
+                font-size: 1.7rem !important;
+            }}
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -540,35 +623,64 @@ def gerar_relatorio_html(titulo: str, subtitulo: str, df_rel: pd.DataFrame,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{titulo}</title>
 <style>
-  body {{ font-family: Arial, Helvetica, sans-serif; color:#1a1a1a; margin:14px; }}
-  .cab {{ text-align:center; border-bottom:3px solid #7b1f24; padding-bottom:12px; margin-bottom:18px; }}
-  .cab h1 {{ margin:0; font-size:17px; }}
-  .cab h2 {{ margin:4px 0 0; font-size:13px; font-weight:normal; color:#555; }}
-  .cab .org {{ font-size:11px; color:#7b1f24; font-weight:bold; letter-spacing:1px; }}
+  /* Paleta institucional COGEX aplicada com sobriedade: fundo branco,
+     texto preto, VINHO e AMARELO-QUEIMADO apenas em filetes finos.
+     Nenhum bloco chapado de cor — impressão limpa, inclusive em P&B. */
+  :root {{
+    --preto:#1C1713; --marrom:#5C4033; --vinho:#7B1F24;
+    --amarelo:#B8862B; --cinza:#6B6259;
+  }}
+  body {{ font-family: Georgia, 'Times New Roman', serif; color:var(--preto);
+          background:#FFFFFF; margin:14px; line-height:1.45; }}
+  .cab {{ text-align:center; padding-bottom:12px; margin-bottom:18px;
+          border-bottom:2px solid var(--vinho); position:relative; }}
+  .cab::after {{ content:""; display:block; width:120px; height:2px;
+                 background:var(--amarelo); margin:4px auto 0; }}
+  .cab h1 {{ margin:0; font-size:16px; letter-spacing:.4px; }}
+  .cab h2 {{ margin:4px 0 0; font-size:12px; font-weight:normal; color:var(--marrom); }}
+  .cab .org {{ font-size:10px; color:var(--marrom); font-weight:bold;
+               letter-spacing:2px; text-transform:uppercase; }}
+  h2.titulo {{ text-align:center; font-size:15px; margin:14px 0 2px;
+               color:var(--preto); }}
+  p.sub {{ text-align:center; color:var(--cinza); font-size:12px; margin-top:2px; }}
   .kpis {{ display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; margin:16px 0; }}
-  .kpi {{ border:1px solid #ccc; border-radius:8px; padding:10px 8px; text-align:center; }}
-  .kpi-num {{ font-size:24px; font-weight:bold; color:#7b1f24; }}
-  .kpi-lab {{ font-size:10px; color:#555; text-transform:uppercase; }}
+  .kpi {{ border:1px solid #D8D2C8; border-top:3px solid var(--vinho);
+          border-radius:4px; padding:9px 8px; text-align:center; background:#FFFFFF; }}
+  .kpi-num {{ font-size:22px; font-weight:bold; color:var(--preto); }}
+  .kpi-lab {{ font-size:9px; color:var(--marrom); text-transform:uppercase;
+              letter-spacing:.6px; }}
   .tabela-wrap {{ overflow-x:auto; -webkit-overflow-scrolling:touch; }}
-  table {{ width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; min-width:520px; }}
-  th, td {{ border:1px solid #bbb; padding:6px 7px; text-align:left; }}
-  th {{ background:#7b1f24; color:#fff; }}
-  tr:nth-child(even) td {{ background:#f6f2f2; }}
-  .rod {{ margin-top:24px; font-size:11px; color:#777; border-top:1px solid #ccc; padding-top:8px; }}
+  table {{ width:100%; border-collapse:collapse; font-size:11.5px;
+           margin-top:10px; min-width:520px; }}
+  th {{ background:#FFFFFF; color:var(--preto); text-align:left;
+        border-bottom:2px solid var(--vinho); border-top:1px solid var(--marrom);
+        padding:7px; font-size:10px; text-transform:uppercase; letter-spacing:.5px; }}
+  td {{ border-bottom:1px solid #E4DED4; padding:6px 7px; }}
+  tbody tr:hover td {{ background:#FAF6EF; }}
+  .rod {{ margin-top:24px; font-size:10px; color:var(--cinza);
+          border-top:1px solid var(--amarelo); padding-top:8px; }}
   @media (min-width: 700px) {{
-    body {{ margin:32px; }}
-    .cab h1 {{ font-size:20px; }}
+    body {{ margin:32px 40px; }}
+    .cab h1 {{ font-size:19px; }}
     .kpis {{ grid-template-columns:repeat(4, 1fr); }}
   }}
-  @media print {{ body {{ margin:12mm; }} .tabela-wrap {{ overflow:visible; }} table {{ min-width:0; }} }}
+  @media print {{
+    body {{ margin:14mm 16mm; }}
+    .tabela-wrap {{ overflow:visible; }}
+    table {{ min-width:0; }}
+    tbody tr:hover td {{ background:transparent; }}
+    .kpi {{ break-inside:avoid; }}
+    thead {{ display:table-header-group; }}  /* cabeçalho repete a cada página */
+    tr {{ break-inside:avoid; }}
+  }}
 </style></head><body>
 <div class="cab">
   <div class="org">PODER JUDICIÁRIO · TRIBUNAL DE JUSTIÇA DO MARANHÃO</div>
   <h1>Corregedoria-Geral do Foro Extrajudicial — COGEX/MA</h1>
   <h2>Núcleo de Registro Civil (NRC) — Unidades Interligadas</h2>
 </div>
-<h2 style="text-align:center;">{titulo}</h2>
-<p style="text-align:center; color:#555;">{subtitulo}</p>
+<h2 class="titulo">{titulo}</h2>
+<p class="sub">{subtitulo}</p>
 <div class="kpis">{linhas_kpi}</div>
 {tabela}
 <div class="rod">
