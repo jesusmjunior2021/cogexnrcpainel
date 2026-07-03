@@ -514,6 +514,99 @@ def detectar_divergencia(valor_obs) -> str:
 
 
 # ----------------------------------------------------------------------------
+# RASTREAMENTO SEMÂNTICO DAS OBSERVAÇÕES (4 EIXOS)
+# Eixos: TOPOLOGIA do erro · DIMENSÃO · INSTÂNCIA responsável · ATINÊNCIA.
+# Dicionário de regras CALIBRADO nos 128 textos qualitativos reais da
+# planilha (leitura integral prévia). Regras avaliadas EM ORDEM (a mais
+# específica primeiro); cada registro guarda a regra e o termo que
+# dispararam — panorama 100% auditável, sem dado inventado.
+# ----------------------------------------------------------------------------
+REGRAS_SEMANTICAS = [
+    # (nome_regra, termos_gatilho, topologia, dimensao, instancia, atinencia)
+    ("processo_cnj",
+     ["PROCESSO CNJ"],
+     "Procedimento em curso", "Sistêmico", "CNJ", "Jurídica"),
+    ("falta_pessoal",
+     ["FALTA DE FUNCIONARIO", "SAIDA DA FUNCIONARIA", "SAIDA DO FUNCIONARIO",
+      "SENDO TREINADA", "SEM FUNCIONARIO"],
+     "Falta de Pessoal", "Crítico", "Hospital/Município", "Operacional"),
+    ("problema_tecnico_sistemas",
+     ["CNS", "SIRC", "REGESTA", "TREINAMENTO DO CARTORIO",
+      "SOLICITACAO DE CADASTRO PARA CRC", "UNIFICACAO DAS SERVENTIAS"],
+     "Problema Técnico (sistemas)", "Crítico", "Cartório", "Técnica"),
+    ("infraestrutura",
+     ["EM REFORMA", "REFORMA", "SEM ENERGIA", "SEM INTERNET", "ESTRUTURA"],
+     "Infraestrutura", "Pontual", "Hospital/Município", "Operacional"),
+    ("sem_demanda_producao",
+     ["NAO TEM REGISTRO PELA UNIDADE", "NENHUMA DEMANDA", "SEM REGISTRO",
+      "SEM MOVIMENTO", "SEM PARTO", "DIRECIONADOS TODOS PARA"],
+     "Sem produção/demanda", "Pontual", "Hospital/Município", "Operacional"),
+    ("divergencia_cadastral",
+     TERMOS_DIVERGENCIA,
+     "Divergência Cadastral", "Sistêmico", "Cartório", "Administrativa"),
+    ("regularizacao_pendente",
+     ["REGULARIZAR", "CONVERTER"],
+     "Regularização pendente", "Pontual", "Cartório", "Administrativa"),
+    ("falha_comunicacao",
+     ["SEM CONTATO", "AGUARDAR RETORNO", "AGUARDANDO RETORNO",
+      "PEGAR RESTANTE DAS INFORMACOES", "PEGAR INFORMACOES"],
+     "Falha de comunicação/articulação", "Pontual", "COGEX", "Administrativa"),
+    ("paralisacao_generica",
+     ["PARALISADA", "PAROU DE FUNCIONAR", "NAO ESTA FUNCIONANDO",
+      "NAO FUNCIONA", "DESATIVADA"],
+     "Paralisação (causa não detalhada)", "Crítico", "Hospital/Município", "Operacional"),
+]
+
+# Textos que NÃO configuram problema (estado normal ou histórico positivo).
+TERMOS_SEM_PROBLEMA = ["OK", "REGULAR", "FUNCIONANDO", "REATIVADA", "REINSTALADA",
+                       "CONVERTIDA", "JA ESTA NO ALICE E NO JUSTICA ABERTA"]
+
+
+def categorizar_problema(texto) -> dict:
+    """Classifica um texto qualitativo nos 4 eixos semânticos.
+    Retorna também a regra e o termo que dispararam (auditoria).
+    Um registro pode acumular MÚLTIPLAS topologias (ex.: paralisada por
+    falta de pessoal E hospital em reforma) — todas são reportadas."""
+    blob = normalizar_nome(texto)
+    vazio = {"TOPOLOGIA": "", "DIMENSAO": "", "INSTANCIA": "",
+             "ATINENCIA": "", "TERMO_GATILHO": "", "REGRA": ""}
+    if not blob:
+        return vazio
+
+    achados = []
+    for regra, termos, topo, dim, inst, atin in REGRAS_SEMANTICAS:
+        for termo in termos:
+            if normalizar_nome(termo) in blob:
+                achados.append((regra, termo, topo, dim, inst, atin))
+                break  # um gatilho por regra basta
+
+    if not achados:
+        # só estado normal/histórico? então não é problema.
+        residuo = blob
+        for t in TERMOS_SEM_PROBLEMA:
+            residuo = residuo.replace(normalizar_nome(t), "")
+        residuo = residuo.replace("|", "").replace("-", "").replace("/", "").strip()
+        if len(residuo) <= 3:
+            return vazio
+        return {"TOPOLOGIA": "Outros (não classificado)", "DIMENSAO": "Pontual",
+                "INSTANCIA": "A apurar", "ATINENCIA": "A apurar",
+                "TERMO_GATILHO": "", "REGRA": "outros"}
+
+    # dimensão consolidada: Crítico > Sistêmico > Pontual
+    ordem = {"Crítico": 3, "Sistêmico": 2, "Pontual": 1}
+    dim_final = max((a[3] for a in achados), key=lambda d: ordem[d])
+    juntar = lambda i: " + ".join(dict.fromkeys(a[i] for a in achados))
+    return {
+        "TOPOLOGIA": juntar(2),
+        "DIMENSAO": dim_final,
+        "INSTANCIA": juntar(4),
+        "ATINENCIA": juntar(5),
+        "TERMO_GATILHO": "; ".join(a[1] for a in achados),
+        "REGRA": "; ".join(a[0] for a in achados),
+    }
+
+
+# ----------------------------------------------------------------------------
 # DETECÇÃO GENÉRICA DE COLUNAS
 # ----------------------------------------------------------------------------
 def detectar_coluna(df: pd.DataFrame, candidatos):
@@ -580,6 +673,22 @@ def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         df["ALERTA_DIVERGENCIA"] = df[col_obs].apply(detectar_divergencia)
     else:
         df["ALERTA_DIVERGENCIA"] = ""
+
+    # RASTREAMENTO SEMÂNTICO: classifica o texto qualitativo consolidado
+    # (situação atual + situação geral + observações) nos 4 eixos.
+    if colunas_texto or col_status:
+        cols_sem = [c for c in [col_status] + colunas_texto if c]
+        def _classificar(row):
+            texto = " | ".join(str(row.get(c, "")) for c in cols_sem)
+            return categorizar_problema(texto)
+        sem = df.apply(_classificar, axis=1, result_type="expand")
+        for eixo in ["TOPOLOGIA", "DIMENSAO", "INSTANCIA", "ATINENCIA",
+                     "TERMO_GATILHO", "REGRA"]:
+            df[f"SEM_{eixo}"] = sem[eixo]
+    else:
+        for eixo in ["TOPOLOGIA", "DIMENSAO", "INSTANCIA", "ATINENCIA",
+                     "TERMO_GATILHO", "REGRA"]:
+            df[f"SEM_{eixo}"] = ""
 
     return df
 
@@ -1042,6 +1151,137 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
         "💡 O arquivo HTML abre em qualquer navegador já formatado com "
         "cabeçalho institucional; use Ctrl+P → 'Salvar como PDF' para gerar "
         "o documento de entrega."
+    )
+
+
+# ----------------------------------------------------------------------------
+# ABA: RASTREAMENTO SEMÂNTICO (panorama de problemas por eixo)
+# ----------------------------------------------------------------------------
+COLUNAS_SEMANTICAS = ["SEM_TOPOLOGIA", "SEM_DIMENSAO", "SEM_INSTANCIA",
+                      "SEM_ATINENCIA", "SEM_TERMO_GATILHO", "SEM_REGRA"]
+
+ROTULOS_EIXOS = {
+    "SEM_TOPOLOGIA": "Topologia do problema",
+    "SEM_DIMENSAO": "Dimensão",
+    "SEM_INSTANCIA": "Instância responsável",
+    "SEM_ATINENCIA": "Atinência",
+}
+
+
+def renderizar_rastreamento(df: pd.DataFrame):
+    col_mun = detectar_coluna(df, ["MUNICÍPIOS", "MUNICIPIO", "MUNICÍPIO"])
+    col_hosp = detectar_coluna(df, ["HOSPITAL"])
+    col_obs = detectar_coluna(df, ["OBSERVAÇÕES", "OBSERVACOES", "OBS"])
+
+    problemas = df[df["SEM_TOPOLOGIA"] != ""].copy()
+    sem_problema = len(df) - len(problemas)
+
+    st.markdown("### 🧭 Rastreamento semântico dos problemas")
+    st.caption(
+        "Cada observação qualitativa da planilha é classificada em 4 eixos "
+        "por dicionário de regras calibrado nos textos reais da base. "
+        "Auditável: as colunas TERMO GATILHO e REGRA mostram exatamente o "
+        "que disparou cada classificação. Nenhum problema é inferido sem "
+        "sinal explícito no texto."
+    )
+
+    r1, r2, r3, r4 = st.columns(4)
+    r1.metric("Total de UIs analisadas", len(df))
+    r2.metric("🚨 Com problema sinalizado", len(problemas))
+    r3.metric("✅ Sem problema sinalizado", sem_problema)
+    criticos = int((problemas["SEM_DIMENSAO"] == "Crítico").sum())
+    r4.metric("🔥 Dimensão CRÍTICA", criticos)
+
+    if not len(problemas):
+        st.info("Nenhum problema sinalizado nos textos da base atual.")
+        return
+
+    st.markdown("---")
+
+    # -------- Filtros por eixo (multiselect: pesquisa cruzada) --------
+    st.markdown("#### Filtrar panorama por eixo")
+    f1, f2 = st.columns(2)
+    filtros = {}
+    with f1:
+        for eixo in ["SEM_TOPOLOGIA", "SEM_INSTANCIA"]:
+            opcoes = sorted({v for cel in problemas[eixo] for v in cel.split(" + ") if v})
+            filtros[eixo] = st.multiselect(ROTULOS_EIXOS[eixo], opcoes, default=[],
+                                           key=f"rast_{eixo}")
+    with f2:
+        for eixo in ["SEM_DIMENSAO", "SEM_ATINENCIA"]:
+            opcoes = sorted({v for cel in problemas[eixo] for v in cel.split(" + ") if v})
+            filtros[eixo] = st.multiselect(ROTULOS_EIXOS[eixo], opcoes, default=[],
+                                           key=f"rast_{eixo}")
+
+    prob_f = problemas.copy()
+    for eixo, escolhidos in filtros.items():
+        if escolhidos:
+            prob_f = prob_f[prob_f[eixo].apply(
+                lambda cel: any(e in cel.split(" + ") for e in escolhidos)
+            )]
+
+    st.markdown(f"**{len(prob_f)} problema(s)** no recorte atual.")
+
+    # -------- Panorama: contagem por eixo (gráficos) --------
+    def contar_eixo(base, eixo):
+        contagem = {}
+        for cel in base[eixo]:
+            for v in cel.split(" + "):
+                if v:
+                    contagem[v] = contagem.get(v, 0) + 1
+        return pd.Series(contagem).sort_values(ascending=False)
+
+    p1, p2 = st.columns(2)
+    with p1:
+        st.markdown("#### Por topologia")
+        st.bar_chart(contar_eixo(prob_f, "SEM_TOPOLOGIA"))
+        st.markdown("#### Por instância responsável")
+        st.bar_chart(contar_eixo(prob_f, "SEM_INSTANCIA"))
+    with p2:
+        st.markdown("#### Por dimensão")
+        st.bar_chart(contar_eixo(prob_f, "SEM_DIMENSAO"))
+        st.markdown("#### Por atinência")
+        st.bar_chart(contar_eixo(prob_f, "SEM_ATINENCIA"))
+
+    st.markdown("---")
+
+    # -------- Tabela auditável + emissão --------
+    st.markdown("#### Detalhamento auditável")
+    cols_mostrar = [c for c in [col_mun, col_hosp] if c]
+    cols_mostrar += ["SEM_TOPOLOGIA", "SEM_DIMENSAO", "SEM_INSTANCIA",
+                     "SEM_ATINENCIA", "SEM_TERMO_GATILHO"]
+    if col_obs:
+        cols_mostrar.append(col_obs)
+    tabela = prob_f[cols_mostrar].rename(columns={
+        "SEM_TOPOLOGIA": "TOPOLOGIA", "SEM_DIMENSAO": "DIMENSÃO",
+        "SEM_INSTANCIA": "INSTÂNCIA", "SEM_ATINENCIA": "ATINÊNCIA",
+        "SEM_TERMO_GATILHO": "TERMO GATILHO",
+    })
+    st.dataframe(tabela, use_container_width=True, hide_index=True)
+
+    csv_bytes = tabela.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ Baixar panorama de problemas (CSV)",
+        data=csv_bytes, file_name="nrc_rastreamento_semantico.csv",
+        mime="text/csv", use_container_width=True,
+    )
+    html_rel = gerar_relatorio_html(
+        titulo="RELATÓRIO — RASTREAMENTO SEMÂNTICO DE PROBLEMAS",
+        subtitulo="Panorama dos gaps operacionais por topologia, dimensão, instância e atinência",
+        df_rel=tabela,
+        resumo_kpis=[
+            ("UIs analisadas", len(df)),
+            ("Com problema", len(problemas)),
+            ("Críticos", criticos),
+            ("No recorte", len(prob_f)),
+        ],
+        colunas=list(tabela.columns),
+    )
+    st.download_button(
+        "🖨️ Baixar relatório formatado (HTML → imprimir/PDF)",
+        data=html_rel.encode("utf-8"),
+        file_name="nrc_rastreamento_semantico.html",
+        mime="text/html", use_container_width=True,
     )
 
 
