@@ -1286,6 +1286,182 @@ def renderizar_rastreamento(df: pd.DataFrame):
 
 
 # ----------------------------------------------------------------------------
+# ABA: GRAFO DE CONECTIVIDADE (esferas ↔ municípios/UIs)
+# Nós centrais = esferas administrativas REAIS da base (Municipal, Estadual,
+# Federal, Privada, Assistencial, Não informada). Nós satélites = UIs.
+# Clique em um nó de UI → detalhe qualitativo (topologia, instância,
+# atinência, observações). Base normativa das UIs: Provimento CNJ nº 13/2010
+# (instituição) e Provimento COGEX nº 07/2021 (âmbito MA).
+# ----------------------------------------------------------------------------
+import math
+
+CORES_ESFERA = {
+    "MUNICIPAL": COGEX_VINHO,        # vinho
+    "ESTADUAL": COGEX_AMARELO,       # amarelo-queimado
+    "FEDERAL": COGEX_MARROM,         # marrom
+    "PRIVADA": "#8A8378",
+    "ASSISTENCIAL": "#A89B8C",
+    "NÃO INFORMADA": "#C4BBAE",
+}
+
+
+def renderizar_grafo(df: pd.DataFrame):
+    try:
+        import plotly.graph_objects as go
+    except ImportError:
+        st.error(
+            "A biblioteca Plotly não está instalada. Adicione `plotly` ao "
+            "requirements.txt do repositório e faça o redeploy."
+        )
+        return
+
+    col_mun = detectar_coluna(df, ["MUNICÍPIOS", "MUNICIPIO", "MUNICÍPIO"])
+    col_hosp = detectar_coluna(df, ["HOSPITAL"])
+    col_esfera = detectar_coluna(df, ["ESFERA"])
+    col_obs = detectar_coluna(df, ["OBSERVAÇÕES", "OBSERVACOES", "OBS"])
+    if not col_mun or not col_esfera:
+        st.warning("A base atual não possui colunas de município/esfera para montar o grafo.")
+        return
+
+    st.markdown("### 🕸️ Grafo de conectividade — esferas × Unidades Interligadas")
+    st.caption(
+        "Cada UI orbita a esfera administrativa do seu hospital, conforme a "
+        "coluna ESFERA da planilha. Nós com contorno vinho têm problema "
+        "sinalizado no rastreamento semântico. Toque/clique em uma UI para "
+        "ver o detalhe qualitativo. Base normativa: Provimento CNJ nº 13/2010 "
+        "e Provimento COGEX nº 07/2021."
+    )
+
+    base = df.copy()
+    base["_ESFERA"] = base[col_esfera].apply(
+        lambda v: normalizar_nome(v) if normalizar_nome(v) else "NÃO INFORMADA"
+    )
+
+    esferas = base["_ESFERA"].value_counts()
+    n_esf = len(esferas)
+
+    # ---- layout radial: hubs em círculo, UIs em leque ao redor do hub ----
+    hub_pos = {}
+    raio_hub = 10.0
+    for i, esf in enumerate(esferas.index):
+        ang = 2 * math.pi * i / n_esf - math.pi / 2
+        hub_pos[esf] = (raio_hub * math.cos(ang), raio_hub * math.sin(ang))
+
+    node_x, node_y, node_text, node_color, node_line, node_size, node_idx = [], [], [], [], [], [], []
+    edge_x, edge_y = [], []
+
+    for esf, (hx, hy) in hub_pos.items():
+        grupo = base[base["_ESFERA"] == esf].reset_index()
+        n = len(grupo)
+        # leque de 300° ao redor do hub, raio proporcional ao tamanho do grupo
+        raio_ui = 2.2 + 0.16 * math.sqrt(n) * 4
+        for j, (_, row) in enumerate(grupo.iterrows()):
+            ang = 2 * math.pi * j / max(n, 1)
+            x = hx + raio_ui * math.cos(ang) * (0.55 if esf == "MUNICIPAL" else 0.35)
+            y = hy + raio_ui * math.sin(ang) * (0.55 if esf == "MUNICIPAL" else 0.35)
+            node_x.append(x); node_y.append(y)
+            problema = str(row.get("SEM_TOPOLOGIA", "")) != ""
+            node_text.append(
+                f"<b>{row[col_mun]}</b><br>{row.get(col_hosp,'')}<br>"
+                f"Esfera: {esf.title()}"
+                + (f"<br>⚠️ {row['SEM_TOPOLOGIA']}" if problema else "<br>✅ sem problema sinalizado")
+            )
+            node_color.append(CORES_ESFERA.get(esf, "#C4BBAE"))
+            node_line.append(COGEX_VINHO if problema else "#FFFFFF")
+            node_size.append(14 if problema else 9)
+            node_idx.append(int(row["index"]))
+            edge_x += [hx, x, None]; edge_y += [hy, y, None]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=edge_x, y=edge_y, mode="lines",
+        line=dict(width=0.5, color="rgba(92,64,51,0.25)"),
+        hoverinfo="none", showlegend=False,
+    ))
+    fig.add_trace(go.Scatter(
+        x=node_x, y=node_y, mode="markers",
+        marker=dict(color=node_color, size=node_size,
+                    line=dict(color=node_line, width=2)),
+        text=node_text, hoverinfo="text",
+        customdata=node_idx, name="Unidades Interligadas",
+    ))
+    # hubs por cima, com rótulo
+    fig.add_trace(go.Scatter(
+        x=[p[0] for p in hub_pos.values()],
+        y=[p[1] for p in hub_pos.values()],
+        mode="markers+text",
+        marker=dict(color=[CORES_ESFERA.get(e, "#C4BBAE") for e in hub_pos],
+                    size=[26 + esferas[e] // 8 for e in hub_pos],
+                    line=dict(color=COGEX_PRETO, width=2)),
+        text=[f"{e.title()}<br>({esferas[e]})" for e in hub_pos],
+        textposition="middle center",
+        textfont=dict(size=10, color=COGEX_PRETO, family="Arial"),
+        hoverinfo="skip", showlegend=False,
+    ))
+    fig.update_layout(
+        height=560, showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x"),
+        margin=dict(l=10, r=10, t=10, b=10),
+        font=dict(color=COGEX_PRETO),
+    )
+
+    evento = st.plotly_chart(
+        fig, use_container_width=True,
+        on_select="rerun", selection_mode="points", key="grafo_ui",
+    )
+
+    # ---- detalhe do nó clicado ----
+    sel_idx = None
+    try:
+        pontos = evento.selection.points if evento else []
+        for p in pontos:
+            if p.get("customdata") is not None:
+                sel_idx = int(p["customdata"])
+                break
+    except Exception:
+        sel_idx = None
+
+    # alternativa de acessibilidade/toque impreciso: seleção manual
+    with st.expander("🔎 Ou selecione a UI manualmente"):
+        nomes = base[col_mun] + " — " + base.get(col_hosp, "").astype(str)
+        escolha = st.selectbox("Unidade", ["(nenhuma)"] + nomes.tolist(), key="grafo_sel")
+        if escolha != "(nenhuma)":
+            sel_idx = base.index[nomes == escolha][0]
+
+    if sel_idx is not None and sel_idx in base.index:
+        row = base.loc[sel_idx]
+
+        def _detalhe():
+            st.markdown(f"#### 🏥 {row[col_mun]}")
+            if col_hosp:
+                st.markdown(f"**Hospital:** {row[col_hosp]}")
+            st.markdown(f"**Esfera:** {row['_ESFERA'].title()}  \n"
+                        f"**Status:** {row.get('STATUS_FUNCIONAMENTO','')}")
+            if str(row.get("SEM_TOPOLOGIA", "")):
+                st.markdown(
+                    f"**Topologia do problema:** {row['SEM_TOPOLOGIA']}  \n"
+                    f"**Dimensão:** {row['SEM_DIMENSAO']}  \n"
+                    f"**Instância responsável:** {row['SEM_INSTANCIA']}  \n"
+                    f"**Atinência:** {row['SEM_ATINENCIA']}  \n"
+                    f"**Termo gatilho:** {row['SEM_TERMO_GATILHO']}"
+                )
+            else:
+                st.markdown("✅ **Sem problema sinalizado** nos textos da base.")
+            if col_obs and str(row.get(col_obs, "")):
+                st.markdown(f"**Observações:** {row[col_obs]}")
+
+        if hasattr(st, "dialog"):
+            @st.dialog(f"Detalhe — {row[col_mun]}")
+            def _pop():
+                _detalhe()
+            _pop()
+        else:
+            st.markdown("---")
+            _detalhe()
+
+
+# ----------------------------------------------------------------------------
 # SEÇÃO: MUNICÍPIOS SEM UNIDADE INTERLIGADA (mantida do v1)
 # ----------------------------------------------------------------------------
 def secao_municipios_sem_ui(df: pd.DataFrame, col_municipio: str):
@@ -1489,7 +1665,7 @@ def painel():
     )
     df_principal = abas[nome_principal]
 
-    rotulos = ["📋 Visão Executiva"] + [
+    rotulos = ["📋 Visão Executiva", "🧭 Rastreamento", "🕸️ Grafo"] + [
         f"{identidade_aba(n)[0]} {identidade_aba(n)[1]}" for n in nomes_abas
     ]
     st.caption(f"🗂️ {len(nomes_abas)} aba(s) carregada(s) da fonte — 100% dos registros.")
@@ -1498,7 +1674,13 @@ def painel():
     with tabs[0]:
         renderizar_visao_executiva(df_principal, abas)
 
-    for tab, nome_aba in zip(tabs[1:], nomes_abas):
+    with tabs[1]:
+        renderizar_rastreamento(df_principal)
+
+    with tabs[2]:
+        renderizar_grafo(df_principal)
+
+    for tab, nome_aba in zip(tabs[3:], nomes_abas):
         with tab:
             st.caption(f"Fonte: aba “{nome_aba}” da planilha oficial · {len(abas[nome_aba])} registros")
             renderizar_aba(abas[nome_aba], nome_aba)
