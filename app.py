@@ -464,6 +464,56 @@ def detectar_sem_producao(row, colunas_texto) -> str:
 
 
 # ----------------------------------------------------------------------------
+# KPI 1 — TIPO DE SERVENTIA
+# Normalização calibrada nas grafias REAIS da planilha (ex.: "2º OFICIO",
+# "2º OFÍCIO", "2º OFÍICO", "OFICIO ÚNICO", "3ª ZONA", "RODÍZIO").
+# ----------------------------------------------------------------------------
+def classificar_serventia(valor) -> str:
+    v = normalizar_nome(valor)
+    if not v:
+        return "Não informado"
+    if "RODIZIO" in v:
+        return "Ofícios em rodízio"
+    if "UNICO" in v or "UNIC0" in v:
+        return "Ofício Único"
+    if "ZONA" in v:
+        return "Zona Registral"
+    # ordinal + qualquer variação de "OFICIO" (cobre o typo OFIICO)
+    for num, rotulo in (("1", "1º Ofício"), ("2", "2º Ofício"),
+                        ("3", "3º Ofício"), ("4", "4º Ofício")):
+        if v.startswith(num) and "OF" in v:
+            return rotulo
+    if "SERVENTIA" in v or "OFICIO" in v or "CARTORIO" in v:
+        return "Outra serventia"
+    return "Outra serventia"
+
+
+# ----------------------------------------------------------------------------
+# KPI 3 — DIVERGÊNCIA CADASTRAL (ALICE × Justiça Aberta × informado)
+# Termos calibrados nas OBSERVAÇÕES reais da planilha. Auditável: a coluna
+# guarda o termo que disparou; sem sinal explícito, nada é marcado.
+# ----------------------------------------------------------------------------
+TERMOS_DIVERGENCIA = [
+    "DIVERG", "DIFERENTE", "DUPLICAD", "DUPLOICAD",
+    "NAO CONSTA", "NÃO CONSTA", "NAO APARECE", "NÃO APARECE",
+    "NAO TA NO", "NÃO TA NO", "NO ALICE TA", "NO ALICE  TA",
+    "NO JA TA", "NO J.A", "NO JA SO TEM", "CADASTRADA DUAS VEZES",
+    "NO JUSTICA ABERTA TA", "NO JUSTIÇA ABERTA TA",
+    "REGULARIZAR JUSTICA ABERTA", "REGULARIZAR JUSTIÇA ABERTA",
+]
+
+
+def detectar_divergencia(valor_obs) -> str:
+    blob = normalizar_nome(valor_obs)
+    if not blob:
+        return ""
+    for termo in TERMOS_DIVERGENCIA:
+        if normalizar_nome(termo) in blob:
+            return termo
+    return ""
+
+
+# ----------------------------------------------------------------------------
 # DETECÇÃO GENÉRICA DE COLUNAS
 # ----------------------------------------------------------------------------
 def detectar_coluna(df: pd.DataFrame, candidatos):
@@ -517,6 +567,19 @@ def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         )
     else:
         df["ALERTA_SEM_PRODUCAO"] = ""
+
+    # KPI 1: tipo de serventia normalizado
+    col_serv = detectar_coluna(df, ["SERVENTIA"])
+    if col_serv:
+        df["TIPO_SERVENTIA"] = df[col_serv].apply(classificar_serventia)
+    else:
+        df["TIPO_SERVENTIA"] = ""
+
+    # KPI 3: divergência cadastral (sinal explícito nas observações)
+    if col_obs:
+        df["ALERTA_DIVERGENCIA"] = df[col_obs].apply(detectar_divergencia)
+    else:
+        df["ALERTA_DIVERGENCIA"] = ""
 
     return df
 
@@ -580,6 +643,34 @@ def calcular_executivo(df: pd.DataFrame) -> dict:
 
     ativas_sem_producao = ativas[ativas["ALERTA_SEM_PRODUCAO"] != ""].copy()
 
+    # KPI 1 — distribuição por tipo de serventia (base completa)
+    serventia_counts = df[df["TIPO_SERVENTIA"] != ""]["TIPO_SERVENTIA"].value_counts()
+
+    # KPI 2 — aderência aos sistemas, calculada SOBRE AS ATIVAS
+    col_ja = detectar_coluna(df, ["JUSTIÇA ABERTA", "JUSTICA ABERTA"])
+    col_crc = detectar_coluna(df, ["HABILITAÇÃO CRC", "HABILITACAO CRC", "CRC"])
+
+    def pct_sim(base: pd.DataFrame, coluna):
+        if not coluna or len(base) == 0:
+            return None, 0, 0
+        sim = (base[coluna].apply(normalizar_nome) == "SIM").sum()
+        return round(100 * sim / len(base), 1), int(sim), len(base)
+
+    pct_ja, n_ja, base_ja = pct_sim(ativas, col_ja)
+    pct_crc, n_crc, base_crc = pct_sim(ativas, col_crc)
+    if col_ja and col_crc and len(ativas):
+        ambos_mask = (
+            (ativas[col_ja].apply(normalizar_nome) == "SIM")
+            & (ativas[col_crc].apply(normalizar_nome) == "SIM")
+        )
+        pct_ambos = round(100 * ambos_mask.sum() / len(ativas), 1)
+        pendentes_sistemas = ativas[~ambos_mask].copy()
+    else:
+        pct_ambos, pendentes_sistemas = None, ativas.iloc[0:0].copy()
+
+    # KPI 3 — divergências cadastrais (ALICE × JA × informado)
+    divergencias = df[df["ALERTA_DIVERGENCIA"] != ""].copy()
+
     return {
         "col_municipio": col_municipio,
         "total_municipios_ma": len(MUNICIPIOS_MA_NORMALIZADOS),
@@ -592,6 +683,13 @@ def calcular_executivo(df: pd.DataFrame) -> dict:
         "reativacao": reativacao,
         "outras": outras,
         "ativas_sem_producao": ativas_sem_producao,
+        "serventia_counts": serventia_counts,
+        "pct_ja": pct_ja, "n_ja": n_ja,
+        "pct_crc": pct_crc, "n_crc": n_crc,
+        "pct_ambos": pct_ambos,
+        "pendentes_sistemas": pendentes_sistemas,
+        "divergencias": divergencias,
+        "col_ja": col_ja, "col_crc": col_crc,
     }
 
 
@@ -735,7 +833,82 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
 
     st.markdown("---")
 
-    # ---------------- REFLEXO DAS DEMAIS ABAS (contexto executivo) --------
+    # ---------------- INDICADORES DE QUALIDADE (3 KPIs) -------------------
+    st.markdown("### 📐 Indicadores de qualidade e conformidade")
+
+    # KPI 2 — Aderência aos sistemas (sobre as UIs ATIVAS)
+    if ex["pct_ja"] is not None or ex["pct_crc"] is not None:
+        q1, q2, q3 = st.columns(3)
+        if ex["pct_ja"] is not None:
+            q1.metric(
+                "🌐 Ativas no Justiça Aberta",
+                f"{ex['pct_ja']}%",
+                f"{ex['n_ja']} de {len(ex['ativas'])}",
+                delta_color="off",
+            )
+        if ex["pct_crc"] is not None:
+            q2.metric(
+                "🗂️ Ativas habilitadas na CRC",
+                f"{ex['pct_crc']}%",
+                f"{ex['n_crc']} de {len(ex['ativas'])}",
+                delta_color="off",
+            )
+        if ex["pct_ambos"] is not None:
+            q3.metric(
+                "✅ Conformidade plena (JA + CRC)",
+                f"{ex['pct_ambos']}%",
+                f"{len(ex['pendentes_sistemas'])} pendente(s)",
+                delta_color="off",
+            )
+        if len(ex["pendentes_sistemas"]):
+            with st.expander(
+                f"Ver as {len(ex['pendentes_sistemas'])} UI(s) ativa(s) com pendência em JA e/ou CRC"
+            ):
+                cols_pend = [c for c in [col_mun,
+                             detectar_coluna(df, ["HOSPITAL"]),
+                             ex["col_ja"], ex["col_crc"]] if c]
+                st.dataframe(
+                    ex["pendentes_sistemas"][cols_pend],
+                    use_container_width=True, hide_index=True,
+                )
+
+    # KPI 1 — Cobertura por tipo de serventia
+    if len(ex["serventia_counts"]):
+        st.markdown("#### ⚖️ Distribuição por tipo de serventia")
+        s1, s2 = st.columns(2)
+        with s1:
+            st.bar_chart(ex["serventia_counts"])
+        with s2:
+            df_serv = ex["serventia_counts"].reset_index()
+            df_serv.columns = ["Tipo de serventia", "UIs"]
+            df_serv["%"] = (100 * df_serv["UIs"] / df_serv["UIs"].sum()).round(1)
+            st.dataframe(df_serv, use_container_width=True, hide_index=True)
+        st.caption(
+            "Grafias variantes da planilha são unificadas apenas para o "
+            "indicador (ex.: “2º OFICIO”, “2º OFÍCIO” → 2º Ofício); a tabela "
+            "detalhada preserva o texto original da fonte."
+        )
+
+    # KPI 3 — Alertas de divergência cadastral (ALICE × JA × informado)
+    st.markdown("#### 🔀 Alertas de divergência cadastral (ALICE × Justiça Aberta)")
+    st.metric("UIs com divergência sinalizada nas observações", len(ex["divergencias"]))
+    if len(ex["divergencias"]):
+        cols_div = [c for c in [col_mun,
+                    detectar_coluna(df, ["HOSPITAL"]),
+                    detectar_coluna(df, ["OBSERVAÇÕES", "OBSERVACOES", "OBS"]),
+                    "ALERTA_DIVERGENCIA"] if c]
+        st.dataframe(
+            ex["divergencias"][cols_div],
+            use_container_width=True, hide_index=True,
+        )
+    st.caption(
+        "Critério auditável: registro marcado apenas quando as OBSERVAÇÕES "
+        "contêm sinal explícito de nome divergente, duplicidade ou ausência "
+        "de cadastro entre os sistemas (ALICE / Justiça Aberta). A coluna "
+        "ALERTA_DIVERGENCIA mostra o termo que disparou."
+    )
+
+    st.markdown("---")
     def achar_aba(fragmento):
         for nome, dfa in abas.items():
             if fragmento in normalizar_nome(nome):
@@ -790,7 +963,9 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
         "(planilha) ou HTML formatado (abrir e imprimir/salvar como PDF)."
     )
 
-    colunas_dado = [c for c in df.columns if c not in ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO")]
+    colunas_dado = [c for c in df.columns if c not in
+                    ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO",
+                     "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")]
 
     df_sem_ui = pd.DataFrame({"MUNICÍPIO SEM UNIDADE INTERLIGADA": ex["municipios_sem_ui"]})
     df_com_ui = pd.DataFrame({"MUNICÍPIO COM UNIDADE INTERLIGADA": ex["municipios_com_ui"]})
@@ -803,6 +978,13 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
         "⚠️ Ativas SEM produção / índice baixo": (
             ex["ativas_sem_producao"],
             colunas_dado + ["ALERTA_SEM_PRODUCAO"],
+        ),
+        "🔀 Divergências cadastrais (ALICE × JA)": (
+            ex["divergencias"],
+            colunas_dado + ["ALERTA_DIVERGENCIA"],
+        ),
+        "🌐 Ativas com pendência em JA e/ou CRC": (
+            ex["pendentes_sistemas"], colunas_dado,
         ),
         "❌ Municípios SEM Unidade Interligada": (df_sem_ui, list(df_sem_ui.columns)),
         "✅ Municípios COM Unidade Interligada": (df_com_ui, list(df_com_ui.columns)),
@@ -826,6 +1008,10 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
         ("Em implantação", len(ex["implantacao"])),
         ("Em reativação", len(ex["reativacao"])),
         ("Ativas sem produção", len(ex["ativas_sem_producao"])),
+        ("Aderência JA", f"{ex['pct_ja']}%" if ex["pct_ja"] is not None else "—"),
+        ("Aderência CRC", f"{ex['pct_crc']}%" if ex["pct_crc"] is not None else "—"),
+        ("Conformidade plena", f"{ex['pct_ambos']}%" if ex["pct_ambos"] is not None else "—"),
+        ("Divergências cadastrais", len(ex["divergencias"])),
     ]
 
     # Downloads empilhados (largura total — alvo de toque no celular)
@@ -997,7 +1183,8 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
 
     st.markdown(f"#### Detalhamento ({total} registros)")
     colunas_exibir = [c for c in df_filtrado.columns
-                      if c not in ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO")]
+                      if c not in ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO",
+                                   "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")]
     if tem_status:
         colunas_exibir += ["STATUS_FUNCIONAMENTO"]
     st.dataframe(df_filtrado[colunas_exibir], use_container_width=True, hide_index=True)
