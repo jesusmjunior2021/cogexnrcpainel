@@ -562,7 +562,7 @@ TERMOS_SEM_PROBLEMA = ["OK", "REGULAR", "FUNCIONANDO", "REATIVADA", "REINSTALADA
                        "CONVERTIDA", "JA ESTA NO ALICE E NO JUSTICA ABERTA"]
 
 
-def categorizar_problema(texto) -> dict:
+def categorizar_problema(texto, municipio: str = "") -> dict:
     """Classifica um texto qualitativo nos 4 eixos semânticos.
     Retorna também a regra e o termo que dispararam (auditoria).
     Um registro pode acumular MÚLTIPLAS topologias (ex.: paralisada por
@@ -583,9 +583,16 @@ def categorizar_problema(texto) -> dict:
     if not achados:
         # só estado normal/histórico? então não é problema.
         residuo = blob
+        if municipio:
+            residuo = residuo.replace(normalizar_nome(municipio), "")
         for t in TERMOS_SEM_PROBLEMA:
             residuo = residuo.replace(normalizar_nome(t), "")
-        residuo = residuo.replace("|", "").replace("-", "").replace("/", "").strip()
+        # datas, números, conectores e o nome do próprio município
+        # (mesmo abreviado) não configuram problema
+        residuo = "".join(ch for ch in residuo if ch.isalpha() or ch == " ")
+        palavras_municipio = set(normalizar_nome(municipio).split())
+        ignorar = {"E", "EM", "DE", "DA", "DO", "NA", "NO", "UI", "MA"} | palavras_municipio
+        residuo = " ".join(p for p in residuo.split() if p not in ignorar)
         if len(residuo) <= 3:
             return vazio
         return {"TOPOLOGIA": "Outros (não classificado)", "DIMENSAO": "Pontual",
@@ -616,6 +623,23 @@ def detectar_coluna(df: pd.DataFrame, candidatos):
             if normalizar_nome(cand) in c_norm:
                 return c
     return None
+
+
+def grafico_barras(serie: pd.Series, rotulo: str = "Categoria"):
+    """Renderiza st.bar_chart de forma robusta: remove categorias vazias e
+    força nomes de coluna explícitos (evita erro de encoding do Altair com
+    índices sem nome, vazios ou contendo caracteres especiais)."""
+    if serie is None or len(serie) == 0:
+        st.caption("Sem dados para este gráfico.")
+        return
+    dfg = serie.reset_index()
+    dfg.columns = [rotulo, "Quantidade"]
+    dfg[rotulo] = dfg[rotulo].astype(str).str.strip()
+    dfg = dfg[dfg[rotulo] != ""]
+    if not len(dfg):
+        st.caption("Sem dados para este gráfico.")
+        return
+    st.bar_chart(dfg, x=rotulo, y="Quantidade", color="#7B1F24")
 
 
 # ----------------------------------------------------------------------------
@@ -676,11 +700,14 @@ def tratar_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # RASTREAMENTO SEMÂNTICO: classifica o texto qualitativo consolidado
     # (situação atual + situação geral + observações) nos 4 eixos.
-    if colunas_texto or col_status:
-        cols_sem = [c for c in [col_status] + colunas_texto if c]
+    # ÍNDICES IBGE fica de fora: é dado numérico, não sinal de problema.
+    cols_sem = [c for c in [col_status, col_sitgeral, col_obs] if c]
+    if cols_sem:
+        col_municipio_sem = detectar_coluna(df, ["MUNICÍPIOS", "MUNICIPIO", "MUNICÍPIO"])
         def _classificar(row):
             texto = " | ".join(str(row.get(c, "")) for c in cols_sem)
-            return categorizar_problema(texto)
+            return categorizar_problema(
+                texto, row.get(col_municipio_sem, "") if col_municipio_sem else "")
         sem = df.apply(_classificar, axis=1, result_type="expand")
         for eixo in ["TOPOLOGIA", "DIMENSAO", "INSTANCIA", "ATINENCIA",
                      "TERMO_GATILHO", "REGRA"]:
@@ -986,7 +1013,7 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
         st.markdown("#### ⚖️ Distribuição por tipo de serventia")
         s1, s2 = st.columns(2)
         with s1:
-            st.bar_chart(ex["serventia_counts"])
+            grafico_barras(ex["serventia_counts"], "Tipo de serventia")
         with s2:
             df_serv = ex["serventia_counts"].reset_index()
             df_serv.columns = ["Tipo de serventia", "UIs"]
@@ -1074,7 +1101,8 @@ def renderizar_visao_executiva(df: pd.DataFrame, abas: dict = None):
 
     colunas_dado = [c for c in df.columns if c not in
                     ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO",
-                     "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")]
+                     "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")
+                    and not c.startswith("SEM_")]
 
     df_sem_ui = pd.DataFrame({"MUNICÍPIO SEM UNIDADE INTERLIGADA": ex["municipios_sem_ui"]})
     df_com_ui = pd.DataFrame({"MUNICÍPIO COM UNIDADE INTERLIGADA": ex["municipios_com_ui"]})
@@ -1234,14 +1262,14 @@ def renderizar_rastreamento(df: pd.DataFrame):
     p1, p2 = st.columns(2)
     with p1:
         st.markdown("#### Por topologia")
-        st.bar_chart(contar_eixo(prob_f, "SEM_TOPOLOGIA"))
+        grafico_barras(contar_eixo(prob_f, "SEM_TOPOLOGIA"), "Topologia")
         st.markdown("#### Por instância responsável")
-        st.bar_chart(contar_eixo(prob_f, "SEM_INSTANCIA"))
+        grafico_barras(contar_eixo(prob_f, "SEM_INSTANCIA"), "Instância")
     with p2:
         st.markdown("#### Por dimensão")
-        st.bar_chart(contar_eixo(prob_f, "SEM_DIMENSAO"))
+        grafico_barras(contar_eixo(prob_f, "SEM_DIMENSAO"), "Dimensão")
         st.markdown("#### Por atinência")
-        st.bar_chart(contar_eixo(prob_f, "SEM_ATINENCIA"))
+        grafico_barras(contar_eixo(prob_f, "SEM_ATINENCIA"), "Atinência")
 
     st.markdown("---")
 
@@ -1570,27 +1598,27 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
         g1, g2 = st.columns(2)
         with g1:
             st.markdown("#### Unidades por status")
-            st.bar_chart(df_filtrado["STATUS_FUNCIONAMENTO"].value_counts())
+            grafico_barras(df_filtrado["STATUS_FUNCIONAMENTO"].value_counts(), "Status")
         with g2:
             if col_esfera:
                 st.markdown("#### Unidades por esfera")
                 esfera_counts = df_filtrado[df_filtrado[col_esfera] != ""][col_esfera].value_counts()
-                st.bar_chart(esfera_counts)
+                grafico_barras(esfera_counts, "Esfera")
 
     if col_justica_aberta or col_crc:
         g3, g4 = st.columns(2)
         with g3:
             if col_justica_aberta:
                 st.markdown("#### Justiça Aberta")
-                st.bar_chart(df_filtrado[col_justica_aberta].value_counts())
+                grafico_barras(df_filtrado[col_justica_aberta].value_counts(), "Justiça Aberta")
         with g4:
             if col_crc:
                 st.markdown("#### Habilitação CRC")
-                st.bar_chart(df_filtrado[col_crc].value_counts())
+                grafico_barras(df_filtrado[col_crc].value_counts(), "Habilitação CRC")
 
     if col_municipio:
         st.markdown("#### Top 15 municípios com mais unidades")
-        st.bar_chart(df_filtrado[col_municipio].value_counts().head(15))
+        grafico_barras(df_filtrado[col_municipio].value_counts().head(15), "Município")
 
     st.markdown("---")
     if tem_status:
@@ -1600,7 +1628,8 @@ def renderizar_aba(df: pd.DataFrame, chave: str):
     st.markdown(f"#### Detalhamento ({total} registros)")
     colunas_exibir = [c for c in df_filtrado.columns
                       if c not in ("STATUS_FUNCIONAMENTO", "ALERTA_SEM_PRODUCAO",
-                                   "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")]
+                                   "TIPO_SERVENTIA", "ALERTA_DIVERGENCIA")
+                    and not c.startswith("SEM_")]
     if tem_status:
         colunas_exibir += ["STATUS_FUNCIONAMENTO"]
     st.dataframe(df_filtrado[colunas_exibir], use_container_width=True, hide_index=True)
