@@ -1334,15 +1334,9 @@ CORES_ESFERA = {
 
 
 def renderizar_grafo(df: pd.DataFrame):
-    try:
-        import plotly.graph_objects as go
-    except ImportError:
-        st.error(
-            "A biblioteca Plotly não está instalada. Adicione `plotly` ao "
-            "requirements.txt do repositório e faça o redeploy."
-        )
-        return
-
+    """Grafo de conectividade em SVG puro (gerado em Python) — nenhuma
+    biblioteca externa de visualização é necessária; compatível com
+    qualquer versão do Streamlit."""
     col_mun = detectar_coluna(df, ["MUNICÍPIOS", "MUNICIPIO", "MUNICÍPIO"])
     col_hosp = detectar_coluna(df, ["HOSPITAL"])
     col_esfera = detectar_coluna(df, ["ESFERA"])
@@ -1354,139 +1348,128 @@ def renderizar_grafo(df: pd.DataFrame):
     st.markdown("### 🕸️ Grafo de conectividade — esferas × Unidades Interligadas")
     st.caption(
         "Cada UI orbita a esfera administrativa do seu hospital, conforme a "
-        "coluna ESFERA da planilha. Nós com contorno vinho têm problema "
-        "sinalizado no rastreamento semântico. Toque/clique em uma UI para "
-        "ver o detalhe qualitativo. Base normativa: Provimento CNJ nº 13/2010 "
-        "e Provimento COGEX nº 07/2021."
+        "coluna ESFERA da planilha. Nós com contorno vinho e maiores têm "
+        "problema sinalizado no rastreamento semântico. Passe o mouse para "
+        "ver o nome; use o seletor abaixo para abrir o detalhe qualitativo. "
+        "Base normativa: Provimento CNJ nº 13/2010 e Provimento COGEX nº 07/2021."
     )
 
-    base = df.copy()
+    base = df.copy().reset_index(drop=True)
     base["_ESFERA"] = base[col_esfera].apply(
         lambda v: normalizar_nome(v) if normalizar_nome(v) else "NÃO INFORMADA"
     )
-
     esferas = base["_ESFERA"].value_counts()
     n_esf = len(esferas)
 
-    # ---- layout radial: hubs em círculo, UIs em leque ao redor do hub ----
+    # ---- geometria: hubs em círculo; UIs orbitando o seu hub ----
+    W, H = 900, 640
+    cx, cy = W / 2, H / 2
+    raio_hub = min(W, H) * 0.30
     hub_pos = {}
-    raio_hub = 10.0
     for i, esf in enumerate(esferas.index):
         ang = 2 * math.pi * i / n_esf - math.pi / 2
-        hub_pos[esf] = (raio_hub * math.cos(ang), raio_hub * math.sin(ang))
+        hub_pos[esf] = (cx + raio_hub * math.cos(ang),
+                        cy + raio_hub * math.sin(ang))
 
-    node_x, node_y, node_text, node_color, node_line, node_size, node_idx = [], [], [], [], [], [], []
-    edge_x, edge_y = [], []
+    def esc(t):  # escape básico p/ SVG
+        return (str(t).replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
 
+    linhas_svg, nos_svg = [], []
     for esf, (hx, hy) in hub_pos.items():
-        grupo = base[base["_ESFERA"] == esf].reset_index()
+        grupo = base[base["_ESFERA"] == esf]
         n = len(grupo)
-        # leque de 300° ao redor do hub, raio proporcional ao tamanho do grupo
-        raio_ui = 2.2 + 0.16 * math.sqrt(n) * 4
+        fator = 0.8 if esf == "MUNICIPAL" else 0.45
+        raio_ui = (26 + 9 * math.sqrt(n)) * fator + 26
         for j, (_, row) in enumerate(grupo.iterrows()):
             ang = 2 * math.pi * j / max(n, 1)
-            x = hx + raio_ui * math.cos(ang) * (0.55 if esf == "MUNICIPAL" else 0.35)
-            y = hy + raio_ui * math.sin(ang) * (0.55 if esf == "MUNICIPAL" else 0.35)
-            node_x.append(x); node_y.append(y)
+            x = hx + raio_ui * math.cos(ang)
+            y = hy + raio_ui * math.sin(ang)
             problema = str(row.get("SEM_TOPOLOGIA", "")) != ""
-            node_text.append(
-                f"<b>{row[col_mun]}</b><br>{row.get(col_hosp,'')}<br>"
-                f"Esfera: {esf.title()}"
-                + (f"<br>⚠️ {row['SEM_TOPOLOGIA']}" if problema else "<br>✅ sem problema sinalizado")
+            cor = CORES_ESFERA.get(esf, "#C4BBAE")
+            borda = COGEX_VINHO if problema else "#FFFFFF"
+            r = 7 if problema else 4.5
+            titulo = f"{row[col_mun]} — {row.get(col_hosp, '')}"
+            if problema:
+                titulo += f" | ⚠️ {row['SEM_TOPOLOGIA']}"
+            linhas_svg.append(
+                f'<line x1="{hx:.0f}" y1="{hy:.0f}" x2="{x:.0f}" y2="{y:.0f}" '
+                f'stroke="{COGEX_MARROM}" stroke-opacity="0.22" stroke-width="0.7"/>'
             )
-            node_color.append(CORES_ESFERA.get(esf, "#C4BBAE"))
-            node_line.append(COGEX_VINHO if problema else "#FFFFFF")
-            node_size.append(14 if problema else 9)
-            node_idx.append(int(row["index"]))
-            edge_x += [hx, x, None]; edge_y += [hy, y, None]
+            nos_svg.append(
+                f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="{cor}" '
+                f'stroke="{borda}" stroke-width="1.6">'
+                f'<title>{esc(titulo)}</title></circle>'
+            )
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=edge_x, y=edge_y, mode="lines",
-        line=dict(width=0.5, color="rgba(92,64,51,0.25)"),
-        hoverinfo="none", showlegend=False,
-    ))
-    fig.add_trace(go.Scatter(
-        x=node_x, y=node_y, mode="markers",
-        marker=dict(color=node_color, size=node_size,
-                    line=dict(color=node_line, width=2)),
-        text=node_text, hoverinfo="text",
-        customdata=node_idx, name="Unidades Interligadas",
-    ))
-    # hubs por cima, com rótulo
-    fig.add_trace(go.Scatter(
-        x=[p[0] for p in hub_pos.values()],
-        y=[p[1] for p in hub_pos.values()],
-        mode="markers+text",
-        marker=dict(color=[CORES_ESFERA.get(e, "#C4BBAE") for e in hub_pos],
-                    size=[26 + esferas[e] // 8 for e in hub_pos],
-                    line=dict(color=COGEX_PRETO, width=2)),
-        text=[f"{e.title()}<br>({esferas[e]})" for e in hub_pos],
-        textposition="middle center",
-        textfont=dict(size=10, color=COGEX_PRETO, family="Arial"),
-        hoverinfo="skip", showlegend=False,
-    ))
-    fig.update_layout(
-        height=560, showlegend=False,
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        xaxis=dict(visible=False), yaxis=dict(visible=False, scaleanchor="x"),
-        margin=dict(l=10, r=10, t=10, b=10),
-        font=dict(color=COGEX_PRETO),
+    hubs_svg = []
+    for esf, (hx, hy) in hub_pos.items():
+        cor = CORES_ESFERA.get(esf, "#C4BBAE")
+        r = 24 + esferas[esf] // 8
+        hubs_svg.append(
+            f'<circle cx="{hx:.0f}" cy="{hy:.0f}" r="{r}" fill="{cor}" '
+            f'stroke="{COGEX_PRETO}" stroke-width="2">'
+            f'<title>{esc(esf.title())}: {esferas[esf]} UI(s)</title></circle>'
+            f'<text x="{hx:.0f}" y="{hy - r - 8:.0f}" text-anchor="middle" '
+            f'font-family="Arial" font-size="12" font-weight="bold" '
+            f'fill="{COGEX_PRETO}">{esc(esf.title())} ({esferas[esf]})</text>'
+        )
+
+    svg = (
+        f'<div style="overflow-x:auto; background:{COGEX_CARD}; '
+        f'border:1px solid {COGEX_MARROM}40; border-radius:10px; padding:6px;">'
+        f'<svg viewBox="0 0 {W} {H}" width="100%" style="min-width:640px;" '
+        f'xmlns="http://www.w3.org/2000/svg">'
+        + "".join(linhas_svg) + "".join(nos_svg) + "".join(hubs_svg)
+        + "</svg></div>"
+    )
+    st.markdown(svg, unsafe_allow_html=True)
+
+    # legenda
+    st.caption(
+        "Legenda: ● nó pequeno com borda branca = UI sem problema sinalizado · "
+        "● nó maior com borda vinho = UI com problema sinalizado · "
+        "círculos grandes = esferas administrativas."
     )
 
-    evento = st.plotly_chart(
-        fig, use_container_width=True,
-        on_select="rerun", selection_mode="points", key="grafo_ui",
-    )
+    # ---- detalhe qualitativo por seleção ----
+    st.markdown("#### 🔎 Detalhe qualitativo da UI")
+    nomes = (base[col_mun].astype(str) + " — " +
+             base[col_hosp].astype(str)) if col_hosp else base[col_mun].astype(str)
+    escolha = st.selectbox("Selecione a Unidade Interligada",
+                           ["(nenhuma)"] + nomes.tolist(), key="grafo_sel")
+    if escolha == "(nenhuma)":
+        return
+    sel_idx = base.index[nomes == escolha][0]
+    row = base.loc[sel_idx]
 
-    # ---- detalhe do nó clicado ----
-    sel_idx = None
-    try:
-        pontos = evento.selection.points if evento else []
-        for p in pontos:
-            if p.get("customdata") is not None:
-                sel_idx = int(p["customdata"])
-                break
-    except Exception:
-        sel_idx = None
-
-    # alternativa de acessibilidade/toque impreciso: seleção manual
-    with st.expander("🔎 Ou selecione a UI manualmente"):
-        nomes = base[col_mun] + " — " + base.get(col_hosp, "").astype(str)
-        escolha = st.selectbox("Unidade", ["(nenhuma)"] + nomes.tolist(), key="grafo_sel")
-        if escolha != "(nenhuma)":
-            sel_idx = base.index[nomes == escolha][0]
-
-    if sel_idx is not None and sel_idx in base.index:
-        row = base.loc[sel_idx]
-
-        def _detalhe():
-            st.markdown(f"#### 🏥 {row[col_mun]}")
-            if col_hosp:
-                st.markdown(f"**Hospital:** {row[col_hosp]}")
-            st.markdown(f"**Esfera:** {row['_ESFERA'].title()}  \n"
-                        f"**Status:** {row.get('STATUS_FUNCIONAMENTO','')}")
-            if str(row.get("SEM_TOPOLOGIA", "")):
-                st.markdown(
-                    f"**Topologia do problema:** {row['SEM_TOPOLOGIA']}  \n"
-                    f"**Dimensão:** {row['SEM_DIMENSAO']}  \n"
-                    f"**Instância responsável:** {row['SEM_INSTANCIA']}  \n"
-                    f"**Atinência:** {row['SEM_ATINENCIA']}  \n"
-                    f"**Termo gatilho:** {row['SEM_TERMO_GATILHO']}"
-                )
-            else:
-                st.markdown("✅ **Sem problema sinalizado** nos textos da base.")
-            if col_obs and str(row.get(col_obs, "")):
-                st.markdown(f"**Observações:** {row[col_obs]}")
-
-        if hasattr(st, "dialog"):
-            @st.dialog(f"Detalhe — {row[col_mun]}")
-            def _pop():
-                _detalhe()
-            _pop()
+    def _detalhe():
+        st.markdown(f"#### 🏥 {row[col_mun]}")
+        if col_hosp:
+            st.markdown(f"**Hospital:** {row[col_hosp]}")
+        st.markdown(f"**Esfera:** {row['_ESFERA'].title()}  \n"
+                    f"**Status:** {row.get('STATUS_FUNCIONAMENTO','')}")
+        if str(row.get("SEM_TOPOLOGIA", "")):
+            st.markdown(
+                f"**Topologia do problema:** {row['SEM_TOPOLOGIA']}  \n"
+                f"**Dimensão:** {row['SEM_DIMENSAO']}  \n"
+                f"**Instância responsável:** {row['SEM_INSTANCIA']}  \n"
+                f"**Atinência:** {row['SEM_ATINENCIA']}  \n"
+                f"**Termo gatilho:** {row['SEM_TERMO_GATILHO']}"
+            )
         else:
-            st.markdown("---")
+            st.markdown("✅ **Sem problema sinalizado** nos textos da base.")
+        if col_obs and str(row.get(col_obs, "")):
+            st.markdown(f"**Observações:** {row[col_obs]}")
+
+    if hasattr(st, "dialog"):
+        @st.dialog(f"Detalhe — {row[col_mun]}")
+        def _pop():
             _detalhe()
+        _pop()
+    else:
+        st.markdown("---")
+        _detalhe()
 
 
 # ----------------------------------------------------------------------------
